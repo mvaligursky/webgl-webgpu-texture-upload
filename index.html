@@ -14,8 +14,8 @@
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             line-height: 1.6;
-            color: #333;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #e0e0e0;
+            background: linear-gradient(135deg, #2c2c2c 0%, #1a1a1a 100%);
             min-height: 100vh;
             display: flex;
             align-items: center;
@@ -23,31 +23,32 @@
         }
 
         .container {
-            background: white;
+            background: #1e1e1e;
             border-radius: 12px;
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
             padding: 40px;
             max-width: 800px;
             width: 90%;
             text-align: center;
+            border: 1px solid #333;
         }
 
         h1 {
-            color: #2c3e50;
+            color: #ffffff;
             margin-bottom: 20px;
             font-size: 2.5rem;
             font-weight: 300;
         }
 
         .subtitle {
-            color: #7f8c8d;
+            color: #b0b0b0;
             font-size: 1.2rem;
             margin-bottom: 40px;
             font-weight: 300;
         }
 
         .description {
-            color: #555;
+            color: #c0c0c0;
             margin-bottom: 40px;
             font-size: 1rem;
             line-height: 1.8;
@@ -62,12 +63,12 @@
         }
 
         .test-card {
-            background: #f8f9fa;
-            border: 2px solid #e9ecef;
+            background: #2a2a2a;
+            border: 2px solid #444;
             border-radius: 8px;
             padding: 30px 20px;
             text-decoration: none;
-            color: #333;
+            color: #e0e0e0;
             transition: all 0.3s ease;
             flex: 1;
             min-width: 280px;
@@ -76,25 +77,26 @@
 
         .test-card:hover {
             transform: translateY(-5px);
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
-            border-color: #667eea;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
+            border-color: #666;
         }
 
         .test-card h2 {
-            color: #2c3e50;
+            color: #ffffff;
             margin-bottom: 15px;
             font-size: 1.4rem;
         }
 
         .test-card p {
-            color: #666;
+            color: #c0c0c0;
             font-size: 0.95rem;
             line-height: 1.6;
         }
 
         .webgl-card {
-            background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%);
+            background: linear-gradient(135deg, #4a4a4a 0%, #333333 100%);
             color: white;
+            border-color: #555;
         }
 
         .webgl-card h2,
@@ -103,8 +105,9 @@
         }
 
         .webgpu-card {
-            background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+            background: linear-gradient(135deg, #555555 0%, #3a3a3a 100%);
             color: white;
+            border-color: #666;
         }
 
         .webgpu-card h2,
@@ -113,14 +116,15 @@
         }
 
         .features {
-            background: #f8f9fa;
+            background: #2a2a2a;
             border-radius: 8px;
             padding: 30px;
             margin-bottom: 30px;
+            border: 1px solid #444;
         }
 
         .features h3 {
-            color: #2c3e50;
+            color: #ffffff;
             margin-bottom: 20px;
         }
 
@@ -132,10 +136,11 @@
         }
 
         .features li {
-            background: white;
+            background: #333333;
             padding: 15px;
             border-radius: 6px;
-            border-left: 4px solid #667eea;
+            border-left: 4px solid #666666;
+            color: #e0e0e0;
         }
 
         .github-link {
@@ -182,6 +187,10 @@
             <p>A comprehensive benchmarking suite designed to measure and compare texture upload performance across WebGL and WebGPU APIs on various hardware platforms and browsers. Test different optimization strategies including allocation patterns, memory alignment, buffer management, and GPU synchronization approaches.</p>
         </div>
 
+        <div class="test-preview">
+            <img src="test-image.png" alt="WebGL/WebGPU Texture Upload Test Screenshot" style="max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); margin: 20px 0;">
+        </div>
+
         <div class="features">
             <h3>🎯 Test Features</h3>
             <ul>
@@ -206,11 +215,11 @@
             </a>
         </div>
 
-        <div style="margin-top: 30px; padding-top: 30px; border-top: 1px solid #eee;">
-            <p style="color: #666; margin-bottom: 15px;">
+        <div style="margin-top: 30px; padding-top: 30px; border-top: 1px solid #444;">
+            <p style="color: #b0b0b0; margin-bottom: 15px;">
                 📋 <strong>Usage:</strong> Run tests to compare upload strategies for your target hardware. Results help optimize texture streaming performance in web graphics applications.
             </p>
-            <p style="color: #666; margin-bottom: 20px;">
+            <p style="color: #b0b0b0; margin-bottom: 20px;">
                 ⭐ Focus on non-Basic tests for realistic GPU-loaded performance scenarios.
             </p>
             

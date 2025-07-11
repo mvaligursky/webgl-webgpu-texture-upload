@@ -12,6 +12,11 @@ Modern web graphics applications require efficient texture streaming and upload 
 - **Provide cross-platform performance data** to guide graphics optimization decisions
 - **Test both mutable and immutable texture approaches** in WebGL for comprehensive analysis
 
+![WebGL/WebGPU Texture Upload Test Screenshot](test-image.png)
+*Example of the benchmark suite running with checkerboard texture patterns and real-time performance metrics*
+
+**🚀 [Try the Live Demo](https://mvaligursky.github.io/webgl-webgpu-texture-upload/)**
+
 ## 🧪 Test Categories
 
 ### WebGL Tests
@@ -140,6 +145,10 @@ Tiled        | 0.29ms   | 0.53ms   | 1.56ms    | 5.55ms     | 76.87ms
 **Driver**: ANGLE Metal Renderer
 
 > **⭐ Star Highlighting**: Stars indicate the best performing upload strategy (excluding Basic test) for each texture size. This focuses on upload performance when the GPU is under realistic load, as Basic tests use minimal shader complexity and don't represent real-world usage patterns.
+
+## 🤖 Development Credits
+
+This repository was built using **Windsurf with Claude Sonnet 3.5** - an AI-powered development environment that enabled rapid prototyping, comprehensive testing, and detailed performance analysis across WebGL and WebGPU APIs.
 
 ## 📝 License
 
