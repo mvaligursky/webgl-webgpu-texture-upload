@@ -99,45 +99,47 @@ The WebGPU benchmark (`index-webgpu.html`) focuses on modern GPU API approaches:
 
 **WebGL1 (Mutable Textures):**
 ```
-Test Method  | 256×256 | 512×512 | 1024×1024 | 2048×2048 | 4096×4096
--------------|---------|---------|-----------|-----------|----------
-Basic        | 0.03ms  | 0.06ms  | 0.41ms    | 1.64ms    | 6.30ms
-GPU-Stress   | 0.24ms  | 1.84ms  | 1.20ms    | 7.82ms    | 14.73ms
-Realloc      | 1.66ms  | 2.41ms  | 1.95ms    | 0.93ms    | 4.64ms
-Buf-Orphan   | 38.13ms | 1.78ms  | 1.22ms    | 7.79ms    | 14.69ms
-Pack-Aln1    | 0.37ms  | 1.78ms  | 1.11ms    | 7.89ms    | 14.71ms
-Pack-Aln8    | 1.32ms  | 1.71ms  | 1.16ms    | 7.87ms    | 14.69ms
-Mem-Share    | 0.99ms  | 1.32ms  | 1.23ms    | 7.80ms    | 14.56ms
+Test Method  | 256×256  | 512×512  | 1024×1024 | 2048×2048  | 4096×4096 
+-------------|----------|----------|-----------|------------|----------
+Basic        | 0.03ms   | 0.06ms   | 0.41ms    | 1.64ms     | 6.30ms
+GPU-Stress   | 0.24ms   | 1.84ms   | 1.20ms    | 7.82ms     | 14.73ms
+Realloc      | 1.66ms   | 2.41ms   | 1.95ms    | 0.93ms ⭐  | 4.64ms ⭐
+Buf-Orphan   | 38.13ms  | 1.78ms   | 1.22ms    | 7.79ms     | 14.69ms
+Pack-Aln1    | 0.37ms ⭐ | 1.78ms   | 1.11ms ⭐ | 7.89ms     | 14.71ms
+Pack-Aln8    | 1.32ms   | 1.71ms   | 1.16ms    | 7.87ms     | 14.69ms
+Mem-Share    | 0.99ms   | 1.32ms ⭐ | 1.23ms    | 7.80ms     | 14.56ms
 ```
 
 **WebGL2 (Immutable Textures):**
 ```
-Test Method  | 256×256 | 512×512 | 1024×1024 | 2048×2048 | 4096×4096
--------------|---------|---------|-----------|-----------|----------
-Basic        | 0.87ms  | 0.05ms  | 0.35ms    | 1.84ms    | 6.87ms
-GPU-Stress   | 0.47ms  | 1.57ms  | 1.07ms    | 7.83ms    | 14.59ms
-Realloc      | 1.48ms  | 2.30ms  | 1.78ms    | 7.74ms    | 14.54ms
-Buf-Orphan   | 1.32ms  | 1.58ms  | 1.12ms    | 7.89ms    | 14.62ms
-Pack-Aln1    | 0.43ms  | 1.56ms  | 1.12ms    | 7.81ms    | 14.54ms
-Pack-Aln8    | 1.28ms  | 2.33ms  | 1.80ms    | 8.44ms    | 14.73ms
-Mem-Share    | 0.86ms  | 3.11ms  | 2.19ms    | 8.80ms    | 15.17ms
+Test Method  | 256×256  | 512×512  | 1024×1024 | 2048×2048  | 4096×4096 
+-------------|----------|----------|-----------|------------|----------
+Basic        | 0.87ms   | 0.05ms   | 0.35ms    | 1.84ms     | 6.87ms
+GPU-Stress   | 0.47ms   | 1.57ms   | 1.07ms    | 7.83ms     | 14.59ms
+Realloc      | 1.48ms   | 2.30ms   | 1.78ms    | 7.74ms ⭐  | 14.54ms ⭐
+Buf-Orphan   | 1.32ms   | 1.58ms   | 1.12ms ⭐ | 7.89ms     | 14.62ms
+Pack-Aln1    | 0.43ms ⭐ | 1.56ms ⭐ | 1.12ms ⭐ | 7.81ms     | 14.54ms ⭐
+Pack-Aln8    | 1.28ms   | 2.33ms   | 1.80ms    | 8.44ms     | 14.73ms
+Mem-Share    | 0.86ms   | 3.11ms   | 2.19ms    | 8.80ms     | 15.17ms
 ```
 
 **WebGPU Results:**
 ```
-Test Method  | 256×256 | 512×512 | 1024×1024 | 2048×2048 | 4096×4096
--------------|---------|---------|-----------|-----------|----------
-Basic        | 0.02ms  | 0.05ms  | 0.13ms    | 2.75ms    | 10.56ms
-GPU-Stress   | 0.02ms  | 0.06ms  | 0.18ms    | 2.72ms    | 10.58ms
-Storage Buf  | 0.04ms  | 0.06ms  | 0.12ms    | 2.69ms    | 10.74ms
-Realloc      | 0.01ms  | 0.08ms  | 0.19ms    | 3.06ms    | 10.46ms
-Multi-Buf    | 0.02ms  | 0.06ms  | 0.10ms    | 2.74ms    | 10.40ms
-Buf-Copy     | 2.51ms  | 2.99ms  | 3.78ms    | 4.91ms    | 10.21ms
-Tiled        | 0.29ms  | 0.53ms  | 1.56ms    | 5.55ms    | 76.87ms
+Test Method  | 256×256  | 512×512  | 1024×1024 | 2048×2048  | 4096×4096 
+-------------|----------|----------|-----------|------------|----------
+Basic        | 0.02ms   | 0.05ms   | 0.13ms    | 2.75ms     | 10.56ms
+GPU-Stress   | 0.02ms ⭐ | 0.06ms ⭐ | 0.18ms    | 2.72ms     | 10.58ms
+Storage Buf  | 0.04ms   | 0.06ms ⭐ | 0.12ms    | 2.69ms ⭐  | 10.74ms
+Realloc      | 0.01ms ⭐ | 0.08ms   | 0.19ms    | 3.06ms     | 10.46ms
+Multi-Buf    | 0.02ms ⭐ | 0.06ms ⭐ | 0.10ms ⭐ | 2.74ms     | 10.40ms
+Buf-Copy     | 2.51ms   | 2.99ms   | 3.78ms    | 4.91ms     | 10.21ms ⭐
+Tiled        | 0.29ms   | 0.53ms   | 1.56ms    | 5.55ms     | 76.87ms
 ```
 
 **Platform**: Apple M4 Max, macOS, Chrome 138.0.0.0  
 **Driver**: ANGLE Metal Renderer
+
+> **⭐ Star Highlighting**: Stars indicate the best performing upload strategy (excluding Basic test) for each texture size. This focuses on upload performance when the GPU is under realistic load, as Basic tests use minimal shader complexity and don't represent real-world usage patterns.
 
 ## 📝 License
 
