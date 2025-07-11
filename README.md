@@ -146,6 +146,82 @@ Tiled        | 0.29ms   | 0.53ms   | 1.56ms    | 5.55ms     | 76.87ms
 
 > **⭐ Star Highlighting**: Stars indicate the best performing upload strategy (excluding Basic test) for each texture size. This focuses on upload performance when the GPU is under realistic load, as Basic tests use minimal shader complexity and don't represent real-world usage patterns.
 
+---
+
+### Apple M4 Max (MacBook Pro, macOS, Safari Tech Preview 223)
+
+#### WebGL Results:
+
+**WebGL1 (Mutable Textures):**
+```
+Test Method  | 256×256  | 512×512  | 1024×1024 | 2048×2048  | 4096×4096 
+-------------|----------|----------|-----------|------------|----------
+Basic        | 0.01ms   | 0.03ms   | 0.24ms    | 0.94ms     | 3.58ms
+GPU-Stress   | 0.01ms ⭐ | 0.01ms ⭐ | 0.23ms    | 0.94ms     | 3.63ms ⭐
+Realloc      | 0.01ms ⭐ | 0.01ms ⭐ | 0.25ms    | 0.90ms ⭐  | 3.72ms
+Buf-Orphan   | 0.00ms ⭐ | 0.03ms   | 0.25ms    | 0.92ms     | 3.81ms
+Double-Buf   | 0.00ms ⭐ | 0.03ms   | 0.24ms    | 0.93ms     | 3.81ms
+Triple-Buf   | 0.01ms ⭐ | 0.01ms ⭐ | 0.22ms ⭐ | 1.15ms     | 3.96ms
+Quad-Buf     | 0.00ms ⭐ | 0.01ms ⭐ | 0.36ms    | 1.18ms     | 3.92ms
+Penta-Buf    | 0.00ms ⭐ | 0.03ms   | 0.23ms    | 1.12ms     | 3.99ms
+PBO-Single   | 0.01ms ⭐ | 0.03ms   | 0.27ms    | 1.30ms     | 4.17ms
+PBO-Double   | 0.02ms   | 0.02ms   | 0.27ms    | 1.32ms     | 4.18ms
+Pack-Aln1    | 0.02ms   | 0.01ms ⭐ | 0.26ms    | 0.99ms     | 3.91ms
+Pack-Aln8    | 0.01ms ⭐ | 0.02ms   | 0.26ms    | 1.01ms     | 3.92ms
+Sync-Flush   | 0.01ms ⭐ | 0.02ms   | 0.26ms    | 0.99ms     | 3.94ms
+Sync-Fin     | 0.01ms ⭐ | 0.03ms   | 0.23ms    | 1.03ms     | 3.91ms
+Sync-None    | 0.01ms ⭐ | 0.01ms ⭐ | 0.25ms    | 1.00ms     | 3.95ms
+Mem-Align    | 0.05ms   | 0.08ms   | 0.48ms    | 1.81ms     | 6.42ms
+Mem-Share    | 0.00ms ⭐ | 0.02ms   | 0.29ms    | 1.04ms     | 4.00ms
+```
+
+**WebGL2 (Immutable Textures):**
+```
+Test Method  | 256×256  | 512×512  | 1024×1024 | 2048×2048  | 4096×4096 
+-------------|----------|----------|-----------|------------|----------
+Basic        | 0.02ms   | 0.03ms   | 0.28ms    | 1.02ms     | 3.94ms
+GPU-Stress   | 0.01ms   | 0.01ms ⭐ | 0.27ms    | 1.02ms     | 4.02ms
+Realloc      | 0.01ms   | 0.01ms ⭐ | 0.27ms    | 1.00ms     | 3.97ms
+Buf-Orphan   | 0.00ms ⭐ | 0.03ms   | 0.24ms    | 1.00ms     | 3.94ms
+Double-Buf   | 0.00ms ⭐ | 0.01ms ⭐ | 0.25ms    | 1.21ms     | 3.84ms
+Triple-Buf   | 0.01ms   | 0.03ms   | 0.28ms    | 1.18ms     | 3.93ms
+Quad-Buf     | 0.03ms   | 0.06ms   | 0.35ms    | 1.19ms     | 3.90ms
+Penta-Buf    | 0.01ms   | 0.02ms   | 0.24ms    | 1.00ms     | 3.94ms
+PBO-Single   | 0.00ms ⭐ | 0.02ms   | 0.31ms    | 1.32ms     | 4.19ms
+PBO-Double   | 0.00ms ⭐ | 0.03ms   | 0.30ms    | 1.32ms     | 4.18ms
+Pack-Aln1    | 0.00ms ⭐ | 0.02ms   | 0.28ms    | 0.97ms ⭐  | 3.86ms
+Pack-Aln8    | 0.00ms ⭐ | 0.01ms ⭐ | 0.25ms    | 0.99ms     | 3.89ms
+Sync-Flush   | 0.00ms ⭐ | 0.02ms   | 0.24ms    | 1.00ms     | 3.89ms
+Sync-Fin     | 0.01ms   | 0.02ms   | 0.26ms    | 0.98ms     | 3.97ms
+Sync-None    | 0.00ms ⭐ | 0.02ms   | 0.23ms ⭐ | 0.98ms     | 3.90ms
+Mem-Align    | 0.03ms   | 0.09ms   | 0.46ms    | 1.67ms     | 6.20ms
+Mem-Share    | 0.01ms   | 0.01ms ⭐ | 0.28ms    | 0.99ms     | 3.79ms ⭐
+```
+
+**WebGPU Results:**
+```
+Test Method  | 256×256  | 512×512  | 1024×1024 | 2048×2048  | 4096×4096 
+-------------|----------|----------|-----------|------------|----------
+Basic        | 0.12ms   | 0.31ms   | 1.19ms    | 4.86ms     | 3.74ms
+GPU-Stress   | 0.08ms   | 0.30ms   | 1.20ms    | 4.75ms ⭐  | 3.76ms ⭐
+Realloc      | 0.07ms   | 0.27ms ⭐ | 1.21ms    | 4.84ms     | 3.88ms
+Double-Buf   | 0.06ms   | 0.28ms   | 1.22ms    | 4.98ms     | 3.91ms
+Triple-Buf   | 0.05ms   | 0.31ms   | 1.28ms    | 5.14ms     | 3.93ms
+Quad-Buf     | 0.04ms ⭐ | 0.31ms   | 1.30ms    | 5.19ms     | 4.10ms
+Penta-Buf    | 0.08ms   | 0.32ms   | 1.30ms    | 5.22ms     | 4.07ms
+Buf-Copy     | 0.59ms   | 1.27ms   | 5.28ms    | 19.10ms    | 43.40ms
+Que-Submit   | 0.28ms   | 0.76ms   | 2.83ms    | 11.40ms    | 15.57ms
+Mem-Align    | 0.07ms   | 0.39ms   | 1.45ms    | 5.76ms     | 6.37ms
+Storage      | 0.10ms   | 0.42ms   | 1.30ms    | 5.25ms     | 4.22ms
+Tiled        | 0.55ms   | 2.00ms   | 7.97ms    | 33.30ms    | 157.12ms
+GPU-Realloc  | 0.10ms   | 0.28ms   | 1.29ms    | 5.06ms     | 4.04ms
+Fresh-Buf    | 0.53ms   | 1.25ms   | 5.28ms    | 19.42ms    | 45.10ms
+Map-Buf      | 0.55ms   | 1.26ms   | 5.16ms    | 19.11ms    | 45.01ms
+```
+
+**Platform**: Apple M4 Max, macOS, Safari Tech Preview 223  
+**Driver**: WebKit WebGPU Implementation
+
 ## 🤖 Development Credits
 
 This repository was built using **Windsurf with Claude Sonnet 3.5** - an AI-powered development environment that enabled rapid prototyping, comprehensive testing, and detailed performance analysis across WebGL and WebGPU APIs.
