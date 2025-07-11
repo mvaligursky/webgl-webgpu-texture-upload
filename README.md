@@ -119,7 +119,7 @@ PBO-Double   | 0.59ms   | 1.54ms ⭐ | 1.13ms ⭐ | 9.73ms     | 29.53ms
 Pack-Aln1    | 0.47ms ⭐ | 1.62ms   | 1.15ms    | 8.12ms     | 15.15ms
 Pack-Aln8    | 1.43ms   | 1.67ms   | 1.22ms    | 8.13ms     | 15.19ms
 Sync-Flush   | 1.49ms   | 1.59ms   | 1.11ms ⭐ | 7.96ms     | 15.10ms
-Sync-Fin     | 1.46ms   | 1.60ms   | 1.14ms    | 7.96ms     | 15.02ms ⭐
+Sync-Fin     | 1.46ms   | 1.60ms   | 1.14ms    | 7.96ms     | 15.02ms
 Sync-None    | 1.41ms   | 1.70ms   | 1.19ms    | 8.07ms     | 15.17ms
 Mem-Align    | 1.40ms   | 1.66ms   | 1.20ms    | 8.29ms     | 17.22ms
 Mem-Share    | 0.83ms   | 1.60ms   | 1.16ms    | 8.13ms     | 15.12ms
