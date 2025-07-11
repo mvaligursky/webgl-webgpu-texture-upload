@@ -1,0 +1,985 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGL2 Texture Upload Performance Test</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background-color: #222;
+            color: #fff;
+        }
+        canvas {
+            border: 1px solid #555;
+            display: block;
+            margin: 20px auto;
+        }
+        .controls {
+            text-align: center;
+            margin: 20px 0;
+        }
+        .log {
+            background-color: #333;
+            padding: 15px;
+            border-radius: 5px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 0 10px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #666;
+            cursor: not-allowed;
+        }
+        .status {
+            font-size: 18px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>WebGL2 Texture Upload Performance Test</h1>
+    <div class="controls">
+        <button id="runAllBtn">Run All Tests (200 loops)</button>
+        <button id="runQuickBtn">Run Quick Tests (50 loops)</button>
+        <button id="stopBtn" disabled>Stop Tests</button>
+        <div style="margin: 10px 0;">
+            <label for="sampleSize">GPU Load (NxN sampling): </label>
+            <input type="number" id="sampleSize" value="40" min="1" max="50" style="width: 60px;">
+            <span id="sampleInfo">(40x40 = 1600 samples per fragment)</span>
+        </div>
+        <div class="status" id="status">Ready to start</div>
+    </div>
+    
+    <canvas id="canvas" width="800" height="600"></canvas>
+    
+    <div class="log" id="log"></div>
+
+    <script>
+        class TextureUploadTester {
+            constructor() {
+                this.canvas = document.getElementById('canvas');
+                this.gl = null;
+                this.program = null;
+                this.expensiveProgram = null;
+                this.texture = null;
+                this.texturePool = []; // For multi-buffering test
+                this.pbo = null; // For PBO tests
+                this.pboPool = []; // For double-buffered PBO test
+                this.framebuffer = null;
+                this.quadBuffer = null;
+                this.isRunning = false;
+                this.currentSize = 256;
+                this.currentIteration = 0;
+                this.maxIterations = 200;
+                this.testSizes = [256, 512, 1024, 2048, 4096];
+                this.currentSizeIndex = 0;
+                this.frameCount = 0;
+                this.lastFrameTime = 0;
+                this.skippedFrames = 0;
+                this.allTestResultsWebGL1 = {}; // Store all test results for WebGL1 (mutable)
+                this.allTestResultsWebGL2 = {}; // Store all test results for WebGL2 (immutable)
+                this.sampleSize = 40;
+                this.currentWebGLMode = 'webgl1'; // Track current mode
+                
+                this.init();
+            }
+
+            log(message) {
+                const logElement = document.getElementById('log');
+                const timestamp = new Date().toLocaleTimeString();
+                // Replace \n with <br> for proper HTML line breaks
+                const formattedMessage = message.replace(/\n/g, '<br>');
+                logElement.innerHTML += `[${timestamp}] ${formattedMessage}<br>`;
+                logElement.scrollTop = logElement.scrollHeight;
+                console.log(message);
+            }
+
+            updateStatus(message) {
+                document.getElementById('status').textContent = message;
+            }
+
+            init() {
+                // Get WebGL2 context
+                this.gl = this.canvas.getContext('webgl2');
+                if (!this.gl) {
+                    this.log('ERROR: WebGL2 not supported');
+                    return;
+                }
+
+                this.log('WebGL2 context created successfully');
+                
+                // Create shader programs
+                this.createShaderProgram();
+                this.createExpensiveShaderProgram();
+                
+                // Create quad geometry
+                this.createQuad();
+                
+                // Set up WebGL state
+                this.gl.clearColor(0.0, 0.0, 0.0, 1.0);
+                this.gl.disable(this.gl.DEPTH_TEST);
+                
+                this.log('Initialization complete');
+            }
+
+            createShaderProgram() {
+                const vertexShaderSource = `#version 300 es
+                    in vec2 a_position;
+                    in vec2 a_texCoord;
+                    out vec2 v_texCoord;
+                    
+                    void main() {
+                        gl_Position = vec4(a_position, 0.0, 1.0);
+                        v_texCoord = a_texCoord;
+                    }`;
+
+                const fragmentShaderSource = `#version 300 es
+                    precision mediump float;
+                    precision mediump usampler2D;
+                    
+                    uniform usampler2D u_texture;
+                    in vec2 v_texCoord;
+                    out vec4 fragColor;
+                    
+                    void main() {
+                        uint packedColor = texture(u_texture, v_texCoord).r;
+                        
+                        // Unpack RGB from 24 bits: R in bits 16-23, G in bits 8-15, B in bits 0-7
+                        float r = float((packedColor >> 16u) & 0xFFu) / 255.0;
+                        float g = float((packedColor >> 8u) & 0xFFu) / 255.0;
+                        float b = float(packedColor & 0xFFu) / 255.0;
+                        
+                        fragColor = vec4(r, g, b, 1.0);
+                    }
+                `;
+
+                const vertexShader = this.createShader(this.gl.VERTEX_SHADER, vertexShaderSource);
+                const fragmentShader = this.createShader(this.gl.FRAGMENT_SHADER, fragmentShaderSource);
+                
+                this.program = this.gl.createProgram();
+                this.gl.attachShader(this.program, vertexShader);
+                this.gl.attachShader(this.program, fragmentShader);
+                this.gl.linkProgram(this.program);
+                
+                if (!this.gl.getProgramParameter(this.program, this.gl.LINK_STATUS)) {
+                    this.log('ERROR: Shader program failed to link: ' + this.gl.getProgramInfoLog(this.program));
+                    return;
+                }
+                
+                this.log('Shader program created successfully');
+            }
+
+            createExpensiveShaderProgram() {
+                const vertexShaderSource = `#version 300 es
+                    in vec2 a_position;
+                    in vec2 a_texCoord;
+                    out vec2 v_texCoord;
+                    
+                    void main() {
+                        gl_Position = vec4(a_position, 0.0, 1.0);
+                        v_texCoord = a_texCoord;
+                    }`;
+
+                const fragmentShaderSource = `#version 300 es
+                    precision highp float;
+                    precision mediump usampler2D;
+                    
+                    in vec2 v_texCoord;
+                    out vec4 fragColor;
+                    
+                    uniform usampler2D u_texture;
+                    uniform float u_sampleSize;
+                    uniform vec2 u_textureSize;
+                    
+                    void main() {
+                        vec3 color = vec3(0.0);
+                        float samples = u_sampleSize * u_sampleSize;
+                        
+                        // Sample NxN grid around current texel and average (matches WebGPU logic)
+                        float halfSize = (u_sampleSize - 1.0) * 0.5;
+                        for (float y = -halfSize; y <= halfSize; y += 1.0) {
+                            for (float x = -halfSize; x <= halfSize; x += 1.0) {
+                                vec2 sampleCoord = v_texCoord + vec2(x, y) / u_textureSize;
+                                uint packedColor = texture(u_texture, sampleCoord).r;
+                                
+                                // Unpack RGB from 24 bits
+                                float r = float((packedColor >> 16u) & 0xFFu) / 255.0;
+                                float g = float((packedColor >> 8u) & 0xFFu) / 255.0;
+                                float b = float(packedColor & 0xFFu) / 255.0;
+                                
+                                color += vec3(r, g, b);
+                            }
+                        }
+                        
+                        fragColor = vec4(color / samples, 1.0);
+                    }`;
+
+                const vertexShader = this.createShader(this.gl.VERTEX_SHADER, vertexShaderSource);
+                const fragmentShader = this.createShader(this.gl.FRAGMENT_SHADER, fragmentShaderSource);
+                
+                this.expensiveProgram = this.gl.createProgram();
+                this.gl.attachShader(this.expensiveProgram, vertexShader);
+                this.gl.attachShader(this.expensiveProgram, fragmentShader);
+                this.gl.linkProgram(this.expensiveProgram);
+                
+                if (!this.gl.getProgramParameter(this.expensiveProgram, this.gl.LINK_STATUS)) {
+                    this.log('ERROR: Expensive shader program failed to link: ' + this.gl.getProgramInfoLog(this.expensiveProgram));
+                    return;
+                }
+                
+                this.log('Expensive shader program created successfully');
+            }
+
+            createShader(type, source) {
+                const shader = this.gl.createShader(type);
+                this.gl.shaderSource(shader, source);
+                this.gl.compileShader(shader);
+                
+                if (!this.gl.getShaderParameter(shader, this.gl.COMPILE_STATUS)) {
+                    this.log('ERROR: Shader compilation failed: ' + this.gl.getShaderInfoLog(shader));
+                    this.gl.deleteShader(shader);
+                    return null;
+                }
+                
+                return shader;
+            }
+
+            createQuad() {
+                // Create quad vertices (position and texture coordinates)
+                const vertices = new Float32Array([
+                    // Position    // TexCoord
+                    -0.9, -0.9,    0.0, 0.0,
+                     0.9, -0.9,    1.0, 0.0,
+                    -0.9,  0.9,    0.0, 1.0,
+                     0.9,  0.9,    1.0, 1.0
+                ]);
+
+                this.quadBuffer = this.gl.createBuffer();
+                this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.quadBuffer);
+                this.gl.bufferData(this.gl.ARRAY_BUFFER, vertices, this.gl.STATIC_DRAW);
+                
+                this.log('Quad geometry created');
+            }
+
+            createTexture(size) {
+                if (this.texture) {
+                    this.gl.deleteTexture(this.texture);
+                }
+
+                this.texture = this.gl.createTexture();
+                this.gl.bindTexture(this.gl.TEXTURE_2D, this.texture);
+                
+                // Set texture parameters
+                this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
+                this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
+                this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.LINEAR);
+                this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.LINEAR);
+                
+                // Create immutable texture storage (RGBA format)
+                this.gl.texStorage2D(this.gl.TEXTURE_2D, 1, this.gl.RGBA8, size, size);
+                
+                this.log(`Texture created: ${size}x${size}`);
+            }
+
+            generateTextureData(size) {
+                const data = new Uint32Array(size * size);
+                
+                // Generate high-contrast checkerboard pattern for better blur visibility
+                const checkSize = Math.max(4, size / 32); // Adjust check size based on texture size
+                
+                for (let y = 0; y < size; y++) {
+                    for (let x = 0; x < size; x++) {
+                        const index = y * size + x;
+                        
+                        // Create checkerboard pattern
+                        const checkX = Math.floor(x / checkSize);
+                        const checkY = Math.floor(y / checkSize);
+                        const isWhite = (checkX + checkY) % 2 === 0;
+                        
+                        let r, g, b;
+                        if (isWhite) {
+                            r = 255; g = 255; b = 255; // White
+                        } else {
+                            r = 0; g = 0; b = 0; // Black
+                        }
+                        
+                        // Pack RGB into 24 bits: R in bits 16-23, G in bits 8-15, B in bits 0-7
+                        data[index] = (r << 16) | (g << 8) | b;
+                    }
+                }
+                
+                return data;
+            }
+
+            async startAllTests(iterations = 200) {
+                if (this.isRunning) return;
+                
+                this.isRunning = true;
+                this.allTestResultsWebGL1 = {};
+                this.allTestResultsWebGL2 = {};
+                this.maxIterations = iterations;
+                this.sampleSize = parseInt(document.getElementById('sampleSize').value);
+                
+                document.getElementById('runAllBtn').disabled = true;
+                document.getElementById('runQuickBtn').disabled = true;
+                document.getElementById('stopBtn').disabled = false;
+                
+                this.log('=== STARTING COMPREHENSIVE TEXTURE UPLOAD PERFORMANCE TEST ===');
+                this.log(`GPU load: ${this.sampleSize}x${this.sampleSize} samples per fragment (${this.sampleSize * this.sampleSize} total)`);
+                
+                // Run all tests
+                const tests = [
+                    { name: 'Basic', type: 'basic' },
+                    { name: 'GPU-Stressed', type: 'gpu-stressed' },
+                    { name: 'Realloc', type: 'allocation-stressed' },
+                    { name: 'Buf-Orphan', type: 'buffer-orphan' },
+                    { name: 'Double-Buffer', type: 'multi-buffer', bufferCount: 2 },
+                    { name: 'Triple-Buffer', type: 'multi-buffer', bufferCount: 3 },
+                    { name: 'Quad-Buffer', type: 'multi-buffer', bufferCount: 4 },
+                    { name: 'Penta-Buffer', type: 'multi-buffer', bufferCount: 5 },
+                    { name: 'PBO-Single', type: 'pbo-single' },
+                    { name: 'PBO-Double', type: 'pbo-double' },
+                    { name: 'Pack-Aln1', type: 'pack-align1' },
+                    { name: 'Pack-Aln8', type: 'pack-align8' },
+                    { name: 'Sync-Flush', type: 'sync-flush' },
+                    { name: 'Sync-Fin', type: 'sync-finish' },
+                    { name: 'Sync-None', type: 'sync-none' },
+                    { name: 'Mem-Align', type: 'mem-aligned' },
+                    { name: 'Mem-Share', type: 'mem-shared' }
+                ];
+                
+                // First run: WebGL1 (Mutable Textures)
+                this.log('\n🔸 RUNNING WEBGL1 (MUTABLE TEXTURES) TESTS 🔸');
+                this.currentWebGLMode = 'webgl1';
+                for (const test of tests) {
+                    if (!this.isRunning) break;
+                    
+                    this.log(`\n=== RUNNING ${test.name.toUpperCase()} TEST (WebGL1) ===`);
+                    this.allTestResultsWebGL1[test.name] = {};
+                    
+                    for (let sizeIndex = 0; sizeIndex < this.testSizes.length; sizeIndex++) {
+                        if (!this.isRunning) break;
+                        
+                        this.currentSize = this.testSizes[sizeIndex];
+                        this.currentSizeIndex = sizeIndex;
+                        
+                        const result = await this.runSingleTest(test);
+                        this.allTestResultsWebGL1[test.name][this.currentSize] = result;
+                    }
+                }
+                
+                // Second run: WebGL2 (Immutable Textures)
+                this.log('\n🔹 RUNNING WEBGL2 (IMMUTABLE TEXTURES) TESTS 🔹');
+                this.currentWebGLMode = 'webgl2';
+                for (const test of tests) {
+                    if (!this.isRunning) break;
+                    
+                    this.log(`\n=== RUNNING ${test.name.toUpperCase()} TEST (WebGL2) ===`);
+                    this.allTestResultsWebGL2[test.name] = {};
+                    
+                    for (let sizeIndex = 0; sizeIndex < this.testSizes.length; sizeIndex++) {
+                        if (!this.isRunning) break;
+                        
+                        this.currentSize = this.testSizes[sizeIndex];
+                        this.currentSizeIndex = sizeIndex;
+                        
+                        const result = await this.runSingleTest(test);
+                        this.allTestResultsWebGL2[test.name][this.currentSize] = result;
+                    }
+                }
+                
+                if (this.isRunning) {
+                    this.logComprehensiveSummary();
+                }
+                
+                this.stopTest();
+            }
+
+            async runSingleTest(testConfig) {
+                this.log(`\n--- Testing ${this.currentSize}x${this.currentSize} texture (${testConfig.name}) ---`);
+                this.updateStatus(`${testConfig.name}: ${this.currentSize}x${this.currentSize} - Preparing...`);
+                
+                // Setup based on test type
+                this.cleanupTextures();
+                this.cleanupPBOs();
+                
+                if (testConfig.type === 'multi-buffer') {
+                    // Create texture pool for multi-buffering
+                    this.texturePool = [];
+                    for (let i = 0; i < testConfig.bufferCount; i++) {
+                        this.texturePool.push(this.createBufferTexture(this.currentSize));
+                    }
+                } else if (testConfig.type === 'pbo-single') {
+                    // Create single texture and PBO
+                    this.texture = this.createBufferTexture(this.currentSize);
+                    this.pbo = this.createPBO(this.currentSize);
+                } else if (testConfig.type === 'pbo-double') {
+                    // Create single texture and double PBO
+                    this.texture = this.createBufferTexture(this.currentSize);
+                    this.pboPool = [this.createPBO(this.currentSize), this.createPBO(this.currentSize)];
+                } else if (testConfig.type === 'buffer-orphan') {
+                    // Create single texture for buffer orphan test
+                    this.texture = this.createBufferTexture(this.currentSize);
+                } else if (testConfig.type.startsWith('pack-')) {
+                    // Create single texture for packing tests
+                    this.texture = this.createBufferTexture(this.currentSize);
+                } else if (testConfig.type.startsWith('sync-') || testConfig.type.startsWith('mem-')) {
+                    // Create single texture for sync and memory tests
+                    this.texture = this.createBufferTexture(this.currentSize);
+                } else if (testConfig.type !== 'allocation-stressed') {
+                    // Create single texture for basic and gpu-stressed tests
+                    this.texture = this.createBufferTexture(this.currentSize);
+                }
+                
+                const textureData = this.generateTextureData(this.currentSize);
+                const dataSizeMB = (textureData.byteLength / (1024 * 1024)).toFixed(2); // R32U uses 4 bytes per pixel
+                
+                // Run test iterations
+                const startTime = performance.now();
+                let uploadTimes = [];
+                let renderTimes = [];
+                let allocationTimes = [];
+                let lruIndex = 0; // For LRU in multi-buffer test
+                
+                for (this.currentIteration = 0; this.currentIteration < this.maxIterations; this.currentIteration++) {
+                    if (!this.isRunning) break;
+                    
+                    this.updateStatus(`${testConfig.name}: ${this.currentSize}x${this.currentSize} - ${this.currentIteration + 1}/${this.maxIterations}`);
+                    
+                    let allocTime = 0;
+                    let currentTexture = this.texture;
+                    
+                    // Handle different test types
+                    if (testConfig.type === 'allocation-stressed') {
+                        const allocStart = performance.now();
+                        currentTexture = this.createBufferTexture(this.currentSize);
+                        allocTime = performance.now() - allocStart;
+                        allocationTimes.push(allocTime);
+                    } else if (testConfig.type === 'multi-buffer') {
+                        // Use LRU texture from pool
+                        currentTexture = this.texturePool[lruIndex];
+                        lruIndex = (lruIndex + 1) % this.texturePool.length;
+                    }
+                    
+                    // Upload texture
+                    const uploadStart = performance.now();
+                    
+                    if (testConfig.type === 'pbo-single') {
+                        this.uploadWithSinglePBO(currentTexture, textureData);
+                    } else if (testConfig.type === 'pbo-double') {
+                        this.uploadWithDoublePBO(currentTexture, textureData, lruIndex);
+                        lruIndex = (lruIndex + 1) % this.pboPool.length;
+                    } else if (testConfig.type === 'buffer-orphan') {
+                        this.uploadWithBufferOrphan(currentTexture, textureData);
+                    } else if (testConfig.type === 'pack-align1') {
+                        this.uploadWithPackAlign1(currentTexture, textureData);
+                    } else if (testConfig.type === 'pack-align8') {
+                        this.uploadWithPackAlign8(currentTexture, textureData);
+                    } else if (testConfig.type === 'sync-flush') {
+                        this.uploadWithSyncFlush(currentTexture, textureData);
+                    } else if (testConfig.type === 'sync-finish') {
+                        this.uploadWithSyncFinish(currentTexture, textureData);
+                    } else if (testConfig.type === 'sync-none') {
+                        this.uploadWithSyncNone(currentTexture, textureData);
+                    } else if (testConfig.type === 'mem-aligned') {
+                        this.uploadWithMemAligned(currentTexture, textureData);
+                    } else if (testConfig.type === 'mem-shared') {
+                        this.uploadWithMemShared(currentTexture, textureData);
+                    } else {
+                        // Standard upload methods
+                        this.gl.bindTexture(this.gl.TEXTURE_2D, currentTexture);
+                        if (this.currentWebGLMode === 'webgl1' && testConfig.type === 'allocation-stressed') {
+                            // WebGL1 mutable: use texImage2D for realloc magic
+                            this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.R32UI, this.currentSize, this.currentSize, 0, this.gl.RED_INTEGER, this.gl.UNSIGNED_INT, textureData);
+                        } else {
+                            // WebGL2 immutable or WebGL1 standard: use texSubImage2D
+                            this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.currentSize, this.currentSize, this.gl.RED_INTEGER, this.gl.UNSIGNED_INT, textureData);
+                        }
+                    }
+                    
+                    const uploadEnd = performance.now();
+                    uploadTimes.push(uploadEnd - uploadStart);
+                    
+                    // Render frame
+                    const renderStart = performance.now();
+                    this.texture = currentTexture; // Set for render method
+                    this.render(testConfig.type !== 'basic'); // Use expensive shader for all tests except basic
+                    const renderEnd = performance.now();
+                    renderTimes.push(renderEnd - renderStart);
+                    
+                    // For allocation-stressed test, delete texture after use to prevent memory leaks
+                    if (testConfig.type === 'allocation-stressed') {
+                        this.gl.deleteTexture(currentTexture);
+                        this.texture = null; // Clear reference
+                    }
+                    
+                    // Small delay to prevent browser locking up
+                    if (this.currentIteration % 10 === 0) {
+                        await new Promise(resolve => setTimeout(resolve, 1));
+                    }
+                }
+                
+                // Calculate statistics
+                const avgUploadTime = uploadTimes.reduce((a, b) => a + b, 0) / uploadTimes.length;
+                const avgRenderTime = renderTimes.reduce((a, b) => a + b, 0) / renderTimes.length;
+                const totalUploadTime = uploadTimes.reduce((a, b) => a + b, 0);
+                const mbPerSecond = (dataSizeMB * this.maxIterations) / (totalUploadTime / 1000);
+                
+                this.log(`  Average upload time: ${avgUploadTime.toFixed(2)}ms`);
+                this.log(`  Average render time: ${avgRenderTime.toFixed(2)}ms`);
+                this.log(`  Upload throughput: ${mbPerSecond.toFixed(2)} MB/s`);
+                
+                if (testConfig.type === 'allocation-stressed' && allocationTimes.length > 0) {
+                    const avgAllocTime = allocationTimes.reduce((a, b) => a + b, 0) / allocationTimes.length;
+                    this.log(`  Average allocation time: ${avgAllocTime.toFixed(2)}ms`);
+                }
+                
+                return {
+                    avgUploadTime: avgUploadTime,
+                    avgRenderTime: avgRenderTime,
+                    throughput: mbPerSecond,
+                    avgAllocationTime: allocationTimes.length > 0 ? allocationTimes.reduce((a, b) => a + b, 0) / allocationTimes.length : 0
+                };
+            }
+
+            createBufferTexture(size) {
+                if (this.currentWebGLMode === 'webgl1') {
+                    return this.createMutableBufferTexture(size);
+                } else {
+                    return this.createImmutableBufferTexture(size);
+                }
+            }
+
+            createMutableBufferTexture(size) {
+                const texture = this.gl.createTexture();
+                this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
+                
+                // Set texture parameters
+                this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
+                this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
+                this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.NEAREST);
+                this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.NEAREST);
+                
+                // Initialize mutable texture with empty data (R32U format)
+                this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.R32UI, size, size, 0, this.gl.RED_INTEGER, this.gl.UNSIGNED_INT, null);
+                
+                return texture;
+            }
+
+            createImmutableBufferTexture(size) {
+                const texture = this.gl.createTexture();
+                this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
+                
+                // Set texture parameters
+                this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
+                this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
+                this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.NEAREST);
+                this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.NEAREST);
+                
+                // Create immutable texture storage (R32U format)
+                this.gl.texStorage2D(this.gl.TEXTURE_2D, 1, this.gl.R32UI, size, size);
+                
+                return texture;
+            }
+
+            createPBO(size) {
+                const pbo = this.gl.createBuffer();
+                this.gl.bindBuffer(this.gl.PIXEL_UNPACK_BUFFER, pbo);
+                this.gl.bufferData(this.gl.PIXEL_UNPACK_BUFFER, size * size * 4, this.gl.STREAM_DRAW); // 4 bytes per pixel for R32U
+                this.gl.bindBuffer(this.gl.PIXEL_UNPACK_BUFFER, null);
+                return pbo;
+            }
+
+            uploadWithSinglePBO(texture, data) {
+                // Upload data to PBO
+                this.gl.bindBuffer(this.gl.PIXEL_UNPACK_BUFFER, this.pbo);
+                this.gl.bufferSubData(this.gl.PIXEL_UNPACK_BUFFER, 0, data);
+                
+                // Transfer from PBO to texture
+                this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
+                this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.currentSize, this.currentSize, this.gl.RED_INTEGER, this.gl.UNSIGNED_INT, 0);
+                
+                // Unbind PBO
+                this.gl.bindBuffer(this.gl.PIXEL_UNPACK_BUFFER, null);
+            }
+
+            uploadWithDoublePBO(texture, data, pboIndex) {
+                const currentPBO = this.pboPool[pboIndex];
+                const nextPBO = this.pboPool[(pboIndex + 1) % this.pboPool.length];
+                
+                // Upload new data to current PBO
+                this.gl.bindBuffer(this.gl.PIXEL_UNPACK_BUFFER, currentPBO);
+                this.gl.bufferSubData(this.gl.PIXEL_UNPACK_BUFFER, 0, data);
+                
+                // Transfer from the other PBO to texture (async from previous frame)
+                this.gl.bindBuffer(this.gl.PIXEL_UNPACK_BUFFER, nextPBO);
+                this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
+                this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.currentSize, this.currentSize, this.gl.RED_INTEGER, this.gl.UNSIGNED_INT, 0);
+                
+                // Unbind PBO
+                this.gl.bindBuffer(this.gl.PIXEL_UNPACK_BUFFER, null);
+            }
+
+            uploadWithBufferOrphan(texture, data) {
+                this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
+                if (this.currentWebGLMode === 'webgl1') {
+                    // WebGL1 mutable: orphan buffer by reallocating, then upload data
+                    this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.R32UI, this.currentSize, this.currentSize, 0, this.gl.RED_INTEGER, this.gl.UNSIGNED_INT, null);
+                    this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.currentSize, this.currentSize, this.gl.RED_INTEGER, this.gl.UNSIGNED_INT, data);
+                } else {
+                    // WebGL2 immutable: cannot be orphaned - just does texSubImage2D
+                    this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.currentSize, this.currentSize, this.gl.RED_INTEGER, this.gl.UNSIGNED_INT, data);
+                }
+            }
+
+            uploadWithPackAlign1(texture, data) {
+                // Test with 1-byte alignment
+                this.gl.pixelStorei(this.gl.UNPACK_ALIGNMENT, 1);
+                this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
+                this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.currentSize, this.currentSize, this.gl.RED_INTEGER, this.gl.UNSIGNED_INT, data);
+                // Reset to default
+                this.gl.pixelStorei(this.gl.UNPACK_ALIGNMENT, 4);
+            }
+
+            uploadWithPackAlign8(texture, data) {
+                // Test with 8-byte alignment
+                this.gl.pixelStorei(this.gl.UNPACK_ALIGNMENT, 8);
+                this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
+                this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.currentSize, this.currentSize, this.gl.RED_INTEGER, this.gl.UNSIGNED_INT, data);
+                // Reset to default
+                this.gl.pixelStorei(this.gl.UNPACK_ALIGNMENT, 4);
+            }
+
+            uploadWithSyncFlush(texture, data) {
+                // Test with gl.flush() after upload
+                this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
+                this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.currentSize, this.currentSize, this.gl.RED_INTEGER, this.gl.UNSIGNED_INT, data);
+                this.gl.flush(); // Force command submission
+            }
+
+            uploadWithSyncFinish(texture, data) {
+                // Test with gl.finish() after upload
+                this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
+                this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.currentSize, this.currentSize, this.gl.RED_INTEGER, this.gl.UNSIGNED_INT, data);
+                this.gl.finish(); // Wait for GPU completion
+            }
+
+            uploadWithSyncNone(texture, data) {
+                // Test with no explicit sync (fire and forget)
+                this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
+                this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.currentSize, this.currentSize, this.gl.RED_INTEGER, this.gl.UNSIGNED_INT, data);
+                // No sync call - let GPU pipeline handle it
+            }
+
+            uploadWithMemAligned(texture, data) {
+                // Test with 64-byte aligned memory
+                const alignedData = this.createAlignedData(data, 64);
+                this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
+                this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.currentSize, this.currentSize, this.gl.RED_INTEGER, this.gl.UNSIGNED_INT, alignedData);
+            }
+
+            uploadWithMemShared(texture, data) {
+                // Test with SharedArrayBuffer (if available)
+                let sharedData;
+                try {
+                    sharedData = new SharedArrayBuffer(data.byteLength);
+                    const sharedView = new Uint32Array(sharedData);
+                    sharedView.set(data);
+                    this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
+                    this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.currentSize, this.currentSize, this.gl.RED_INTEGER, this.gl.UNSIGNED_INT, sharedView);
+                } catch (e) {
+                    // SharedArrayBuffer not available, fallback to regular upload
+                    this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
+                    this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.currentSize, this.currentSize, this.gl.RED_INTEGER, this.gl.UNSIGNED_INT, data);
+                }
+            }
+
+            createAlignedData(sourceData, alignment) {
+                // Create aligned buffer
+                const size = sourceData.byteLength;
+                const buffer = new ArrayBuffer(size + alignment - 1);
+                const offset = alignment - (buffer.byteLength % alignment);
+                const alignedBuffer = buffer.slice(offset, offset + size);
+                const alignedView = new Uint32Array(alignedBuffer);
+                alignedView.set(sourceData);
+                return alignedView;
+            }
+
+
+
+
+
+            cleanupPBOs() {
+                if (this.pbo) {
+                    this.gl.deleteBuffer(this.pbo);
+                    this.pbo = null;
+                }
+                
+                for (const pbo of this.pboPool) {
+                    this.gl.deleteBuffer(pbo);
+                }
+                this.pboPool = [];
+            }
+
+            cleanupTextures() {
+                if (this.texture) {
+                    this.gl.deleteTexture(this.texture);
+                    this.texture = null;
+                }
+                
+                for (const tex of this.texturePool) {
+                    this.gl.deleteTexture(tex);
+                }
+                this.texturePool = [];
+            }
+
+            render(useExpensiveShader = false) {
+                this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+                this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+                
+                const currentProgram = useExpensiveShader ? this.expensiveProgram : this.program;
+                this.gl.useProgram(currentProgram);
+                
+                // Set up attributes
+                this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.quadBuffer);
+                
+                const positionLocation = this.gl.getAttribLocation(currentProgram, 'a_position');
+                const texCoordLocation = this.gl.getAttribLocation(currentProgram, 'a_texCoord');
+                
+                this.gl.enableVertexAttribArray(positionLocation);
+                this.gl.vertexAttribPointer(positionLocation, 2, this.gl.FLOAT, false, 16, 0);
+                
+                this.gl.enableVertexAttribArray(texCoordLocation);
+                this.gl.vertexAttribPointer(texCoordLocation, 2, this.gl.FLOAT, false, 16, 8);
+                
+                // Bind texture
+                this.gl.activeTexture(this.gl.TEXTURE0);
+                this.gl.bindTexture(this.gl.TEXTURE_2D, this.texture);
+                const textureLocation = this.gl.getUniformLocation(currentProgram, 'u_texture');
+                this.gl.uniform1i(textureLocation, 0);
+                
+                // Set expensive shader uniforms if needed
+                if (useExpensiveShader) {
+                    const sampleSizeLocation = this.gl.getUniformLocation(currentProgram, 'u_sampleSize');
+                    const textureSizeLocation = this.gl.getUniformLocation(currentProgram, 'u_textureSize');
+                    this.gl.uniform1f(sampleSizeLocation, this.sampleSize);
+                    this.gl.uniform2f(textureSizeLocation, this.currentSize, this.currentSize);
+                }
+                
+                // Draw quad
+                this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4);
+            }
+
+            logComprehensiveSummary() {
+                this.log('\n\n=== COMPREHENSIVE WEBGL1 vs WEBGL2 PERFORMANCE SUMMARY ===');
+                this.log('Comparing Mutable vs Immutable Texture Performance');
+                
+                // Test descriptions for WebGL1
+                const testDescriptionsWebGL1 = {
+                    'Basic': 'Reuse single mutable R32U texture with texSubImage2D (cheap shader)',
+                    'GPU-Stressed': 'Reuse single mutable R32U texture with texSubImage2D (heavy GPU load)',
+                    'Realloc': 'Create new mutable R32U texture each frame with texImage2D (heavy GPU load)',
+                    'Buf-Orphan': 'Mutable R32U texture orphaned with texImage2D+null, then texSubImage2D (heavy GPU load)',
+                    'Double-Buffer': 'Cycle between 2 pre-allocated R32U textures (heavy GPU load)',
+                    'Triple-Buffer': 'Cycle between 3 pre-allocated R32U textures (heavy GPU load)',
+                    'Quad-Buffer': 'Cycle between 4 pre-allocated R32U textures (heavy GPU load)',
+                    'Penta-Buffer': 'Cycle between 5 pre-allocated R32U textures (heavy GPU load)',
+                    'PBO-Single': 'Single PBO async upload with R32U texture (heavy GPU load)',
+                    'PBO-Double': 'Double-buffered PBO async upload with R32U texture (heavy GPU load)',
+                    'Pack-Align1': 'R32U texture with 1-byte pixel alignment (heavy GPU load)',
+                    'Pack-Align8': 'R32U texture with 8-byte pixel alignment (heavy GPU load)',
+                    'Sync-Flush': 'R32U texture with gl.flush() after upload (heavy GPU load)',
+                    'Sync-Finish': 'R32U texture with gl.finish() after upload (heavy GPU load)',
+                    'Sync-None': 'R32U texture with no explicit sync (heavy GPU load)',
+                    'Mem-Aligned': 'R32U texture with 64-byte aligned memory (heavy GPU load)',
+                    'Mem-Shared': 'R32U texture with SharedArrayBuffer (heavy GPU load)'
+                };
+                
+                // Test descriptions for WebGL2
+                const testDescriptionsWebGL2 = {
+                    'Basic': 'Reuse single immutable R32U texture with texSubImage2D (cheap shader)',
+                    'GPU-Stressed': 'Reuse single immutable R32U texture with texSubImage2D (heavy GPU load)',
+                    'Realloc': 'Create new immutable R32U texture each frame with texStorage2D+texSubImage2D (heavy GPU load)',
+                    'Buffer-Orphan': 'Immutable R32U texture with texSubImage2D (heavy GPU load)',
+                    'Double-Buffer': 'Cycle between 2 pre-allocated R32U textures (heavy GPU load)',
+                    'Triple-Buffer': 'Cycle between 3 pre-allocated R32U textures (heavy GPU load)',
+                    'Quad-Buffer': 'Cycle between 4 pre-allocated R32U textures (heavy GPU load)',
+                    'Penta-Buffer': 'Cycle between 5 pre-allocated R32U textures (heavy GPU load)',
+                    'PBO-Single': 'Single PBO async upload with R32U texture (heavy GPU load)',
+                    'PBO-Double': 'Double-buffered PBO async upload with R32U texture (heavy GPU load)',
+                    'Pack-Align1': 'R32U texture with 1-byte pixel alignment (heavy GPU load)',
+                    'Pack-Align8': 'R32U texture with 8-byte pixel alignment (heavy GPU load)',
+                    'Sync-Flush': 'R32U texture with gl.flush() after upload (heavy GPU load)',
+                    'Sync-Finish': 'R32U texture with gl.finish() after upload (heavy GPU load)',
+                    'Sync-None': 'R32U texture with no explicit sync (heavy GPU load)',
+                    'Mem-Aligned': 'R32U texture with 64-byte aligned memory (heavy GPU load)',
+                    'Mem-Shared': 'R32U texture with SharedArrayBuffer (heavy GPU load)'
+                };
+                
+                // Log WebGL1 test descriptions
+                this.log('\nWebGL1 (Mutable Textures) Test Descriptions:');
+                const tests = Object.keys(this.allTestResultsWebGL1);
+                for (const test of tests) {
+                    this.log(`  ${test}: ${testDescriptionsWebGL1[test] || 'Unknown test'}`);
+                }
+                
+                // Log WebGL2 test descriptions
+                this.log('\nWebGL2 (Immutable Textures) Test Descriptions:');
+                for (const test of tests) {
+                    this.log(`  ${test}: ${testDescriptionsWebGL2[test] || 'Unknown test'}`);
+                }
+                
+                // Create shortened test names for headers
+                const shortNames = {
+                    'Basic': 'Basic',
+                    'GPU-Stressed': 'GPU-Stress',
+                    'Realloc': 'Realloc',
+                    'Buffer-Orphan': 'Buf-Orphan',
+                    'Double-Buffer': 'Double-Buf',
+                    'Triple-Buffer': 'Triple-Buf',
+                    'Quad-Buffer': 'Quad-Buf',
+                    'Penta-Buffer': 'Penta-Buf',
+                    'PBO-Single': 'PBO-Single',
+                    'PBO-Double': 'PBO-Double',
+                    'Pack-Align1': 'Pack-Aln1',
+                    'Pack-Align8': 'Pack-Aln8',
+                    'Sync-Flush': 'Sync-Flush',
+                    'Sync-Finish': 'Sync-Fin',
+                    'Sync-None': 'Sync-None',
+                    'Mem-Aligned': 'Mem-Align',
+                    'Mem-Shared': 'Mem-Share'
+                };
+                
+                // Get raw browser information
+                
+                const getWebGLInfo = () => {
+                    try {
+                        const canvas = document.createElement('canvas');
+                        const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+                        if (gl) {
+                            const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+                            return {
+                                vendor: debugInfo ? gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR),
+                                renderer: debugInfo ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER),
+                                version: gl.getParameter(gl.VERSION),
+                                shadingLanguageVersion: gl.getParameter(gl.SHADING_LANGUAGE_VERSION)
+                            };
+                        }
+                    } catch (e) {
+                        // Fallback
+                    }
+                    return null;
+                };
+                
+                const webglInfo = getWebGLInfo();
+                
+                this.log('\nSystem Information:');
+                this.log(`User Agent: ${navigator.userAgent}`);
+                this.log(`Platform: ${navigator.platform}`);
+                if (webglInfo) {
+                    this.log(`WebGL Info: ${JSON.stringify(webglInfo, null, 2)}`);
+                } else {
+                    this.log('WebGL Info: Not available');
+                }
+                
+                // WebGL1 Results Table
+                this.log('\n🔸 WEBGL1 (MUTABLE TEXTURES) RESULTS:');
+                let header1 = 'Resolution   |';
+                let header2 = '             |';
+                for (const test of tests) {
+                    const shortName = shortNames[test] || test;
+                    header1 += ` ${shortName.padEnd(10)}|`;
+                    header2 += ` ${'(ms)'.padEnd(10)}|`;
+                }
+                this.log(header1);
+                this.log(header2);
+                
+                let separator = '-------------|';
+                for (const test of tests) {
+                    separator += '-----------';
+                }
+                this.log(separator);
+                
+                for (const size of this.testSizes) {
+                    let row = `${size}x${size}`.padEnd(12) + ' |';
+                    for (const test of tests) {
+                        const result = this.allTestResultsWebGL1[test][size];
+                        const value = result ? result.avgUploadTime.toFixed(2) : 'N/A';
+                        row += ` ${value.padEnd(10)}|`;
+                    }
+                    this.log(row);
+                }
+                
+                // WebGL2 Results Table
+                this.log('\n🔹 WEBGL2 (IMMUTABLE TEXTURES) RESULTS:');
+                this.log(header1);
+                this.log(header2);
+                this.log(separator);
+                
+                for (const size of this.testSizes) {
+                    let row = `${size}x${size}`.padEnd(12) + ' |';
+                    for (const test of tests) {
+                        const result = this.allTestResultsWebGL2[test][size];
+                        const value = result ? result.avgUploadTime.toFixed(2) : 'N/A';
+                        row += ` ${value.padEnd(10)}|`;
+                    }
+                    this.log(row);
+                }
+            }
+
+            stopTest() {
+                this.isRunning = false;
+                this.cleanupTextures();
+                this.cleanupPBOs();
+                document.getElementById('runAllBtn').disabled = false;
+                document.getElementById('runQuickBtn').disabled = false;
+                document.getElementById('stopBtn').disabled = true;
+                this.updateStatus('All tests complete');
+                this.log('\n=== ALL TESTS COMPLETE ===');
+            }
+        }
+
+        // Initialize the tester when page loads
+        let tester;
+        window.addEventListener('DOMContentLoaded', () => {
+            tester = new TextureUploadTester();
+            
+            document.getElementById('runAllBtn').addEventListener('click', () => {
+                tester.startAllTests();
+            });
+            
+            document.getElementById('runQuickBtn').addEventListener('click', () => {
+                tester.startAllTests(50);
+            });
+            
+            document.getElementById('sampleSize').addEventListener('input', (e) => {
+                const size = parseInt(e.target.value);
+                const total = size * size;
+                document.getElementById('sampleInfo').textContent = `(${size}x${size} = ${total} samples per fragment)`;
+            });
+            
+            document.getElementById('stopBtn').addEventListener('click', () => {
+                tester.stopTest();
+            });
+        });
+    </script>
+</body>
+</html>

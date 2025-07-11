@@ -1,0 +1,1060 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGPU Texture Upload Performance Test</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background-color: #222;
+            color: #fff;
+        }
+        canvas {
+            border: 1px solid #555;
+            display: block;
+            margin: 20px auto;
+        }
+        .controls {
+            text-align: center;
+            margin: 20px 0;
+        }
+        .log {
+            background-color: #333;
+            padding: 15px;
+            border-radius: 5px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 0 10px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #666;
+            cursor: not-allowed;
+        }
+        .status {
+            font-size: 18px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>WebGPU Texture Upload Performance Test</h1>
+    <div class="controls">
+        <button id="runAllBtn">Run All Tests (200 loops)</button>
+        <button id="runQuickBtn">Run Quick Tests (50 loops)</button>
+        <button id="stopBtn" disabled>Stop Tests</button>
+        <div style="margin: 10px 0;">
+            <label for="sampleSize">GPU Load (NxN sampling): </label>
+            <input type="number" id="sampleSize" value="40" min="1" max="50" style="width: 60px;">
+            <span id="sampleInfo">(40x40 = 1600 samples per fragment)</span>
+        </div>
+        <div class="status" id="status">Ready to start</div>
+    </div>
+    
+    <canvas id="canvas" width="800" height="600"></canvas>
+    
+    <div class="log" id="log"></div>
+
+    <script>
+        class TextureUploadTester {
+            constructor() {
+                this.canvas = document.getElementById('canvas');
+                this.device = null;
+                this.context = null;
+                this.basicPipeline = null;
+                this.expensivePipeline = null;
+                this.texture = null;
+                this.texturePool = []; // For multi-buffering test
+                this.vertexBuffer = null;
+                this.sampler = null;
+                this.isRunning = false;
+                this.currentSize = 256;
+                this.currentIteration = 0;
+                this.maxIterations = 200;
+                this.testSizes = [256, 512, 1024, 2048, 4096];
+                this.currentSizeIndex = 0;
+                this.frameCount = 0;
+                this.lastFrameTime = 0;
+                this.skippedFrames = 0;
+                this.allTestResults = {}; // Store all test results
+                this.sampleSize = 40;
+                
+                this.init();
+            }
+
+            log(message) {
+                const logElement = document.getElementById('log');
+                const timestamp = new Date().toLocaleTimeString();
+                // Replace \n with <br> for proper HTML line breaks
+                const formattedMessage = message.replace(/\n/g, '<br>');
+                logElement.innerHTML += `[${timestamp}] ${formattedMessage}<br>`;
+                logElement.scrollTop = logElement.scrollHeight;
+                console.log(message);
+            }
+
+            updateStatus(message) {
+                document.getElementById('status').textContent = message;
+            }
+
+            async init() {
+                // Check WebGPU support
+                if (!navigator.gpu) {
+                    this.log('ERROR: WebGPU not supported');
+                    return;
+                }
+
+                // Get WebGPU adapter and device
+                const adapter = await navigator.gpu.requestAdapter();
+                if (!adapter) {
+                    this.log('ERROR: No WebGPU adapter found');
+                    return;
+                }
+
+                this.device = await adapter.requestDevice();
+                this.log('WebGPU device created successfully');
+
+                // Configure canvas context
+                this.context = this.canvas.getContext('webgpu');
+                const canvasFormat = navigator.gpu.getPreferredCanvasFormat();
+                this.context.configure({
+                    device: this.device,
+                    format: canvasFormat,
+                });
+
+                // Create render pipelines
+                await this.createRenderPipelines();
+                
+                // Create vertex buffer
+                this.createVertexBuffer();
+                
+                // Create sampler
+                this.createSampler();
+                
+                this.log('Initialization complete');
+            }
+
+            async createRenderPipelines() {
+                // Basic vertex shader
+                const basicVertexShader = this.device.createShaderModule({
+                    code: `
+                        struct VertexInput {
+                            @location(0) position: vec2<f32>,
+                            @location(1) texCoord: vec2<f32>,
+                        }
+                        
+                        struct VertexOutput {
+                            @builtin(position) position: vec4<f32>,
+                            @location(0) texCoord: vec2<f32>,
+                        }
+                        
+                        @vertex
+                        fn main(input: VertexInput) -> VertexOutput {
+                            var output: VertexOutput;
+                            output.position = vec4<f32>(input.position, 0.0, 1.0);
+                            output.texCoord = input.texCoord;
+                            return output;
+                        }
+                    `
+                });
+
+                // Basic fragment shader
+                const basicFragmentShader = this.device.createShaderModule({
+                    code: `
+                        @group(0) @binding(0) var tex: texture_2d<u32>;
+                        
+                        @fragment
+                        fn main(@location(0) texCoord: vec2<f32>) -> @location(0) vec4<f32> {
+                            let packedColor = textureLoad(tex, vec2<i32>(texCoord * vec2<f32>(textureDimensions(tex))), 0).r;
+                            
+                            // Unpack RGB from 24 bits: R in bits 16-23, G in bits 8-15, B in bits 0-7
+                            let r = f32((packedColor >> 16u) & 0xFFu) / 255.0;
+                            let g = f32((packedColor >> 8u) & 0xFFu) / 255.0;
+                            let b = f32(packedColor & 0xFFu) / 255.0;
+                            
+                            return vec4<f32>(r, g, b, 1.0);
+                        }
+                    `
+                });
+
+                // Expensive fragment shader
+                const expensiveFragmentShader = this.device.createShaderModule({
+                    code: `
+                        struct Uniforms {
+                            sampleSize: f32,
+                            textureSize: vec2<f32>,
+                        }
+                        
+                        @group(0) @binding(0) var tex: texture_2d<u32>;
+                        @group(0) @binding(1) var<uniform> uniforms: Uniforms;
+                        
+                        @fragment
+                        fn main(@location(0) texCoord: vec2<f32>) -> @location(0) vec4<f32> {
+                            var color = vec3<f32>(0.0);
+                            let samples = uniforms.sampleSize * uniforms.sampleSize;
+                            let texDims = vec2<f32>(textureDimensions(tex));
+                            
+                            let halfSize = (uniforms.sampleSize - 1.0) * 0.5;
+                            for (var y = -halfSize; y <= halfSize; y += 1.0) {
+                                for (var x = -halfSize; x <= halfSize; x += 1.0) {
+                                    let sampleCoord = texCoord + vec2<f32>(x, y) / texDims;
+                                    let texelCoord = vec2<i32>(sampleCoord * texDims);
+                                    let packedColor = textureLoad(tex, texelCoord, 0).r;
+                                    
+                                    // Unpack RGB from 24 bits
+                                    let r = f32((packedColor >> 16u) & 0xFFu) / 255.0;
+                                    let g = f32((packedColor >> 8u) & 0xFFu) / 255.0;
+                                    let b = f32(packedColor & 0xFFu) / 255.0;
+                                    
+                                    color += vec3<f32>(r, g, b);
+                                }
+                            }
+                            
+                            return vec4<f32>(color / samples, 1.0);
+                        }
+                    `
+                });
+
+                const canvasFormat = navigator.gpu.getPreferredCanvasFormat();
+
+                // Create basic pipeline
+                this.basicPipeline = this.device.createRenderPipeline({
+                    layout: 'auto',
+                    vertex: {
+                        module: basicVertexShader,
+                        entryPoint: 'main',
+                        buffers: [{
+                            arrayStride: 16, // 4 floats * 4 bytes
+                            attributes: [
+                                { format: 'float32x2', offset: 0, shaderLocation: 0 }, // position
+                                { format: 'float32x2', offset: 8, shaderLocation: 1 }, // texCoord
+                            ]
+                        }]
+                    },
+                    fragment: {
+                        module: basicFragmentShader,
+                        entryPoint: 'main',
+                        targets: [{ format: canvasFormat }]
+                    },
+                    primitive: { topology: 'triangle-strip' }
+                });
+
+                // Create expensive pipeline
+                this.expensivePipeline = this.device.createRenderPipeline({
+                    layout: 'auto',
+                    vertex: {
+                        module: basicVertexShader,
+                        entryPoint: 'main',
+                        buffers: [{
+                            arrayStride: 16,
+                            attributes: [
+                                { format: 'float32x2', offset: 0, shaderLocation: 0 },
+                                { format: 'float32x2', offset: 8, shaderLocation: 1 },
+                            ]
+                        }]
+                    },
+                    fragment: {
+                        module: expensiveFragmentShader,
+                        entryPoint: 'main',
+                        targets: [{ format: canvasFormat }]
+                    },
+                    primitive: { topology: 'triangle-strip' }
+                });
+
+                // Storage buffer fragment shader (bypasses texture entirely)
+                const storageBufferFragmentShader = this.device.createShaderModule({
+                    code: `
+                        struct Uniforms {
+                            sampleSize: f32,
+                            textureSize: vec2<f32>,
+                        }
+                        
+                        @group(0) @binding(0) var<storage, read> pixelData: array<u32>;
+                        @group(0) @binding(1) var<uniform> uniforms: Uniforms;
+                        
+                        @fragment
+                        fn main(@location(0) texCoord: vec2<f32>) -> @location(0) vec4<f32> {
+                            let texSize = vec2<i32>(uniforms.textureSize);
+                            let pixelCoord = vec2<i32>(texCoord * uniforms.textureSize);
+                            let index = pixelCoord.y * texSize.x + pixelCoord.x;
+                            
+                            if (index >= 0 && index < i32(arrayLength(&pixelData))) {
+                                let packedColor = pixelData[index];
+                                
+                                // Unpack RGB from 24 bits
+                                let r = f32((packedColor >> 16u) & 0xFFu) / 255.0;
+                                let g = f32((packedColor >> 8u) & 0xFFu) / 255.0;
+                                let b = f32(packedColor & 0xFFu) / 255.0;
+                                
+                                return vec4<f32>(r, g, b, 1.0);
+                            } else {
+                                return vec4<f32>(1.0, 0.0, 1.0, 1.0); // Magenta for out of bounds
+                            }
+                        }
+                    `
+                });
+
+                // Create storage buffer pipeline
+                this.storageBufferPipeline = this.device.createRenderPipeline({
+                    layout: 'auto',
+                    vertex: {
+                        module: basicVertexShader,
+                        entryPoint: 'main',
+                        buffers: [{
+                            arrayStride: 16,
+                            attributes: [
+                                { format: 'float32x2', offset: 0, shaderLocation: 0 },
+                                { format: 'float32x2', offset: 8, shaderLocation: 1 },
+                            ]
+                        }]
+                    },
+                    fragment: {
+                        module: storageBufferFragmentShader,
+                        entryPoint: 'main',
+                        targets: [{ format: canvasFormat }]
+                    },
+                    primitive: { topology: 'triangle-strip' }
+                });
+
+                this.log('Render pipelines created successfully');
+            }
+
+            createVertexBuffer() {
+                // Create quad vertices (position and texture coordinates)
+                const vertices = new Float32Array([
+                    // Position    // TexCoord
+                    -0.9, -0.9,    0.0, 0.0,
+                     0.9, -0.9,    1.0, 0.0,
+                    -0.9,  0.9,    0.0, 1.0,
+                     0.9,  0.9,    1.0, 1.0
+                ]);
+
+                this.vertexBuffer = this.device.createBuffer({
+                    size: vertices.byteLength,
+                    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+                });
+                this.device.queue.writeBuffer(this.vertexBuffer, 0, vertices);
+                
+                this.log('Vertex buffer created');
+            }
+
+            createSampler() {
+                this.sampler = this.device.createSampler({
+                    magFilter: 'linear',
+                    minFilter: 'linear',
+                    addressModeU: 'clamp-to-edge',
+                    addressModeV: 'clamp-to-edge'
+                });
+            }
+
+            generateTextureData(size) {
+                const data = new Uint32Array(size * size);
+                
+                // Generate high-contrast checkerboard pattern for better blur visibility
+                const checkSize = Math.max(4, size / 32); // Adjust check size based on texture size
+                
+                for (let y = 0; y < size; y++) {
+                    for (let x = 0; x < size; x++) {
+                        const index = y * size + x;
+                        
+                        // Create checkerboard pattern
+                        const checkX = Math.floor(x / checkSize);
+                        const checkY = Math.floor(y / checkSize);
+                        const isWhite = (checkX + checkY) % 2 === 0;
+                        
+                        let r, g, b;
+                        if (isWhite) {
+                            r = 255; g = 255; b = 255; // White
+                        } else {
+                            r = 0; g = 0; b = 0; // Black
+                        }
+                        
+                        // Pack RGB into 24 bits: R in bits 16-23, G in bits 8-15, B in bits 0-7
+                        data[index] = (r << 16) | (g << 8) | b;
+                    }
+                }
+                
+                return data;
+            }
+
+            async startAllTests(iterations = 200) {
+                if (this.isRunning) return;
+                
+                this.isRunning = true;
+                this.allTestResults = {};
+                this.maxIterations = iterations;
+                this.sampleSize = parseInt(document.getElementById('sampleSize').value);
+                
+                document.getElementById('runAllBtn').disabled = true;
+                document.getElementById('runQuickBtn').disabled = true;
+                document.getElementById('stopBtn').disabled = false;
+                
+                this.log('=== STARTING COMPREHENSIVE TEXTURE UPLOAD PERFORMANCE TEST ===');
+                this.log(`GPU load: ${this.sampleSize}x${this.sampleSize} samples per fragment (${this.sampleSize * this.sampleSize} total)`);
+                
+                // Run all tests
+                const tests = [
+                    { name: 'Basic', type: 'basic' },
+                    { name: 'GPU-Stressed', type: 'gpu-stressed' },
+                    { name: 'Realloc', type: 'allocation-stressed' },
+                    { name: 'Double-Buffer', type: 'multi-buffer', bufferCount: 2 },
+                    { name: 'Triple-Buffer', type: 'multi-buffer', bufferCount: 3 },
+                    { name: 'Quad-Buffer', type: 'multi-buffer', bufferCount: 4 },
+                    { name: 'Penta-Buffer', type: 'multi-buffer', bufferCount: 5 },
+                    { name: 'Buffer-Copy', type: 'buffer-copy' },
+                    { name: 'Queue-Submit', type: 'queue-submit' },
+                    { name: 'Mem-Aligned', type: 'mem-aligned' },
+                    { name: 'Storage-Buffer', type: 'storage-buffer' },
+                    { name: 'Tiled-1024', type: 'tiled-upload' },
+                    { name: 'GPU-Realloc', type: 'gpu-realloc' },
+                    { name: 'Fresh-Buffer', type: 'fresh-buffer' },
+                    { name: 'Mapped-Buffer', type: 'mapped-buffer' }
+                ];
+                
+                for (const test of tests) {
+                    if (!this.isRunning) break;
+                    
+                    this.log(`\n=== RUNNING ${test.name.toUpperCase()} TEST ===`);
+                    this.allTestResults[test.name] = {};
+                    
+                    for (let sizeIndex = 0; sizeIndex < this.testSizes.length; sizeIndex++) {
+                        if (!this.isRunning) break;
+                        
+                        this.currentSize = this.testSizes[sizeIndex];
+                        this.currentSizeIndex = sizeIndex;
+                        
+                        const result = await this.runSingleTest(test);
+                        this.allTestResults[test.name][this.currentSize] = result;
+                    }
+                }
+                
+                if (this.isRunning) {
+                    await this.logComprehensiveSummary();
+                }
+                
+                this.stopTest();
+            }
+
+            async runSingleTest(testConfig) {
+                this.log(`\n--- Testing ${this.currentSize}x${this.currentSize} texture (${testConfig.name}) ---`);
+                this.updateStatus(`${testConfig.name}: ${this.currentSize}x${this.currentSize} - Preparing...`);
+                
+                // Setup based on test type
+                this.cleanupTextures();
+                
+                if (testConfig.type === 'multi-buffer') {
+                    // Create texture pool for multi-buffering
+                    this.texturePool = [];
+                    for (let i = 0; i < testConfig.bufferCount; i++) {
+                        this.texturePool.push(this.createBufferTexture(this.currentSize));
+                    }
+                } else if (testConfig.type.startsWith('buffer-') || testConfig.type.startsWith('queue-') || testConfig.type.startsWith('mem-')) {
+                    // Create single texture for optimization tests
+                    this.texture = this.createBufferTexture(this.currentSize);
+                } else if (testConfig.type === 'storage-buffer') {
+                    // No texture needed for storage buffer test
+                    this.storageBuffer = null;
+                } else if (testConfig.type === 'tiled-upload') {
+                    // Create single texture for tiled upload
+                    this.texture = this.createBufferTexture(this.currentSize);
+                    this.tileTextures = [];
+                } else if (testConfig.type === 'gpu-realloc' || testConfig.type.startsWith('fresh-') || testConfig.type.startsWith('mapped-')) {
+                    // No initial texture for fresh allocation tests
+                    this.texture = null;
+                } else if (testConfig.type !== 'allocation-stressed') {
+                    // Create single texture for basic and gpu-stressed tests
+                    this.texture = this.createBufferTexture(this.currentSize);
+                }
+                
+                const textureData = this.generateTextureData(this.currentSize);
+                const dataSizeMB = (textureData.length / (1024 * 1024)).toFixed(2);
+                
+                // Run test iterations
+                const startTime = performance.now();
+                let uploadTimes = [];
+                let renderTimes = [];
+                let allocationTimes = [];
+                let lruIndex = 0; // For LRU in multi-buffer test
+                
+                for (this.currentIteration = 0; this.currentIteration < this.maxIterations; this.currentIteration++) {
+                    if (!this.isRunning) break;
+                    
+                    this.updateStatus(`${testConfig.name}: ${this.currentSize}x${this.currentSize} - ${this.currentIteration + 1}/${this.maxIterations}`);
+                    
+                    let allocTime = 0;
+                    let currentTexture = this.texture;
+                    
+                    // Handle different test types
+                    if (testConfig.type === 'allocation-stressed') {
+                        const allocStart = performance.now();
+                        currentTexture = this.createBufferTexture(this.currentSize);
+                        allocTime = performance.now() - allocStart;
+                        allocationTimes.push(allocTime);
+                    } else if (testConfig.type === 'multi-buffer') {
+                        // Use LRU texture from pool
+                        currentTexture = this.texturePool[lruIndex];
+                        lruIndex = (lruIndex + 1) % this.texturePool.length;
+                    }
+                    
+                    // Upload texture
+                    const uploadStart = performance.now();
+                    if (testConfig.type === 'buffer-copy') {
+                        await this.uploadWithBufferCopy(currentTexture, textureData);
+                    } else if (testConfig.type === 'queue-submit') {
+                        await this.uploadWithQueueSubmit(currentTexture, textureData);
+                    } else if (testConfig.type === 'mem-aligned') {
+                        await this.uploadWithMemAligned(currentTexture, textureData);
+                    } else if (testConfig.type === 'storage-buffer') {
+                        await this.uploadWithStorageBuffer(textureData);
+                    } else if (testConfig.type === 'tiled-upload') {
+                        await this.uploadWithTiles(currentTexture, textureData);
+                    } else if (testConfig.type === 'gpu-realloc') {
+                        currentTexture = await this.uploadWithGPURealloc(textureData);
+                    } else if (testConfig.type === 'fresh-buffer') {
+                        currentTexture = await this.uploadWithFreshBuffer(textureData);
+                    } else if (testConfig.type === 'mapped-buffer') {
+                        currentTexture = await this.uploadWithMappedBuffer(textureData);
+                    } else {
+                        // Standard WebGPU upload
+                        this.device.queue.writeTexture(
+                            { texture: currentTexture },
+                            textureData,
+                            { bytesPerRow: this.currentSize * 4 }, // R32U = 4 bytes per pixel
+                            { width: this.currentSize, height: this.currentSize }
+                        );
+                    }
+                    const uploadEnd = performance.now();
+                    uploadTimes.push(uploadEnd - uploadStart);
+                    
+                    // Render frame
+                    const renderStart = performance.now();
+                    this.texture = currentTexture; // Set for render method
+                    const useExpensiveShader = testConfig.type !== 'basic';
+                    const useStorageBuffer = testConfig.type === 'storage-buffer';
+                    await this.render(useExpensiveShader, useStorageBuffer);
+                    const renderEnd = performance.now();
+                    renderTimes.push(renderEnd - renderStart);
+                    
+                    // For allocation-stressed test, delete texture after use to prevent memory leaks
+                    if (testConfig.type === 'allocation-stressed') {
+                        currentTexture.destroy();
+                        this.texture = null; // Clear reference
+                    }
+                    
+                    // Small delay to prevent browser locking up
+                    if (this.currentIteration % 10 === 0) {
+                        await new Promise(resolve => setTimeout(resolve, 1));
+                    }
+                }
+                
+                // Calculate statistics
+                const avgUploadTime = uploadTimes.reduce((a, b) => a + b, 0) / uploadTimes.length;
+                const avgRenderTime = renderTimes.reduce((a, b) => a + b, 0) / renderTimes.length;
+                const totalUploadTime = uploadTimes.reduce((a, b) => a + b, 0);
+                const mbPerSecond = (dataSizeMB * this.maxIterations) / (totalUploadTime / 1000);
+                
+                this.log(`  Average upload time: ${avgUploadTime.toFixed(2)}ms`);
+                this.log(`  Average render time: ${avgRenderTime.toFixed(2)}ms`);
+                this.log(`  Upload throughput: ${mbPerSecond.toFixed(2)} MB/s`);
+                
+                if (testConfig.type === 'allocation-stressed' && allocationTimes.length > 0) {
+                    const avgAllocTime = allocationTimes.reduce((a, b) => a + b, 0) / allocationTimes.length;
+                    this.log(`  Average allocation time: ${avgAllocTime.toFixed(2)}ms`);
+                }
+                
+                return {
+                    avgUploadTime: avgUploadTime,
+                    avgRenderTime: avgRenderTime,
+                    throughput: mbPerSecond,
+                    avgAllocationTime: allocationTimes.length > 0 ? allocationTimes.reduce((a, b) => a + b, 0) / allocationTimes.length : 0
+                };
+            }
+
+            createBufferTexture(size) {
+                const texture = this.device.createTexture({
+                    size: { width: size, height: size },
+                    format: 'r32uint',
+                    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+                });
+                
+                return texture;
+            }
+
+            cleanupTextures() {
+                if (this.texture) {
+                    this.texture.destroy();
+                    this.texture = null;
+                }
+                
+                for (const tex of this.texturePool) {
+                    tex.destroy();
+                }
+                this.texturePool = [];
+            }
+
+            async uploadWithBufferCopy(texture, data) {
+                // Test using buffer-to-texture copy instead of writeTexture
+                const bufferSize = data.byteLength;
+                const buffer = this.device.createBuffer({
+                    size: bufferSize,
+                    usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+                    mappedAtCreation: true
+                });
+                
+                // Copy data to buffer
+                new Uint8Array(buffer.getMappedRange()).set(new Uint8Array(data.buffer));
+                buffer.unmap();
+                
+                // Copy from buffer to texture
+                const commandEncoder = this.device.createCommandEncoder();
+                commandEncoder.copyBufferToTexture(
+                    { buffer, bytesPerRow: this.currentSize * 4 },
+                    { texture },
+                    { width: this.currentSize, height: this.currentSize }
+                );
+                
+                const commands = commandEncoder.finish();
+                this.device.queue.submit([commands]);
+                await this.device.queue.onSubmittedWorkDone();
+                
+                buffer.destroy();
+            }
+
+            async uploadWithQueueSubmit(texture, data) {
+                // Test explicit queue submission after writeTexture
+                this.device.queue.writeTexture(
+                    { texture },
+                    data,
+                    { bytesPerRow: this.currentSize * 4 },
+                    { width: this.currentSize, height: this.currentSize }
+                );
+                
+                // Explicitly submit and wait
+                const commandEncoder = this.device.createCommandEncoder();
+                const commands = commandEncoder.finish();
+                this.device.queue.submit([commands]);
+                await this.device.queue.onSubmittedWorkDone();
+            }
+
+            async uploadWithMemAligned(texture, data) {
+                // Test with 64-byte aligned data
+                const alignedData = this.createAlignedData(data, 64);
+                this.device.queue.writeTexture(
+                    { texture },
+                    alignedData,
+                    { bytesPerRow: this.currentSize * 4 },
+                    { width: this.currentSize, height: this.currentSize }
+                );
+            }
+
+            createAlignedData(sourceData, alignment) {
+                // Create aligned buffer for WebGPU
+                const size = sourceData.byteLength;
+                const buffer = new ArrayBuffer(size + alignment - 1);
+                const offset = alignment - (buffer.byteLength % alignment);
+                const alignedBuffer = buffer.slice(offset, offset + size);
+                const alignedView = new Uint32Array(alignedBuffer);
+                alignedView.set(sourceData);
+                return alignedView;
+            }
+
+            async uploadWithStorageBuffer(data) {
+                // Upload data to storage buffer instead of texture
+                if (this.storageBuffer) {
+                    this.storageBuffer.destroy();
+                }
+                
+                const bufferSize = data.byteLength;
+                this.storageBuffer = this.device.createBuffer({
+                    size: bufferSize,
+                    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+                });
+                
+                this.device.queue.writeBuffer(this.storageBuffer, 0, data);
+            }
+
+            async uploadWithTiles(texture, data) {
+                // Upload large texture as 1024x1024 tiles for optimal performance
+                const tileSize = 1024;
+                const tilesX = Math.ceil(this.currentSize / tileSize);
+                const tilesY = Math.ceil(this.currentSize / tileSize);
+                
+                for (let tileY = 0; tileY < tilesY; tileY++) {
+                    for (let tileX = 0; tileX < tilesX; tileX++) {
+                        const startX = tileX * tileSize;
+                        const startY = tileY * tileSize;
+                        const endX = Math.min(startX + tileSize, this.currentSize);
+                        const endY = Math.min(startY + tileSize, this.currentSize);
+                        const actualTileWidth = endX - startX;
+                        const actualTileHeight = endY - startY;
+                        
+                        // Create tile data
+                        const tileData = new Uint32Array(actualTileWidth * actualTileHeight);
+                        for (let y = 0; y < actualTileHeight; y++) {
+                            for (let x = 0; x < actualTileWidth; x++) {
+                                const srcIndex = (startY + y) * this.currentSize + (startX + x);
+                                const dstIndex = y * actualTileWidth + x;
+                                tileData[dstIndex] = data[srcIndex];
+                            }
+                        }
+                        
+                        // Upload tile
+                        this.device.queue.writeTexture(
+                            { 
+                                texture,
+                                origin: { x: startX, y: startY, z: 0 }
+                            },
+                            tileData,
+                            { bytesPerRow: actualTileWidth * 4 },
+                            { width: actualTileWidth, height: actualTileHeight }
+                        );
+                        
+                        // Small delay between tiles to avoid blocking
+                        await new Promise(resolve => setTimeout(resolve, 0));
+                    }
+                }
+            }
+
+            async uploadWithGPURealloc(data) {
+                // Create fresh texture each frame (WebGPU equivalent of WebGL realloc)
+                const texture = this.device.createTexture({
+                    size: { width: this.currentSize, height: this.currentSize },
+                    format: 'r32uint',
+                    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+                });
+                
+                this.device.queue.writeTexture(
+                    { texture },
+                    data,
+                    { bytesPerRow: this.currentSize * 4 },
+                    { width: this.currentSize, height: this.currentSize }
+                );
+                
+                return texture;
+            }
+
+            async uploadWithFreshBuffer(data) {
+                // Create fresh buffer + texture each frame
+                const buffer = this.device.createBuffer({
+                    size: data.byteLength,
+                    usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+                    mappedAtCreation: true
+                });
+                
+                // Copy data to fresh buffer
+                new Uint8Array(buffer.getMappedRange()).set(new Uint8Array(data.buffer));
+                buffer.unmap();
+                
+                // Create fresh texture
+                const texture = this.device.createTexture({
+                    size: { width: this.currentSize, height: this.currentSize },
+                    format: 'r32uint',
+                    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+                });
+                
+                // Copy from fresh buffer to fresh texture
+                const commandEncoder = this.device.createCommandEncoder();
+                commandEncoder.copyBufferToTexture(
+                    { buffer, bytesPerRow: this.currentSize * 4 },
+                    { texture },
+                    { width: this.currentSize, height: this.currentSize }
+                );
+                
+                const commands = commandEncoder.finish();
+                this.device.queue.submit([commands]);
+                await this.device.queue.onSubmittedWorkDone();
+                
+                buffer.destroy();
+                return texture;
+            }
+
+            async uploadWithMappedBuffer(data) {
+                // Use mapped buffer creation for potentially faster upload
+                const texture = this.device.createTexture({
+                    size: { width: this.currentSize, height: this.currentSize },
+                    format: 'r32uint',
+                    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+                });
+                
+                // Create mapped buffer for direct memory access
+                const buffer = this.device.createBuffer({
+                    size: data.byteLength,
+                    usage: GPUBufferUsage.COPY_SRC,
+                    mappedAtCreation: true
+                });
+                
+                // Direct memory copy
+                const mappedData = new Uint32Array(buffer.getMappedRange());
+                mappedData.set(data);
+                buffer.unmap();
+                
+                // Copy to texture
+                const commandEncoder = this.device.createCommandEncoder();
+                commandEncoder.copyBufferToTexture(
+                    { buffer, bytesPerRow: this.currentSize * 4 },
+                    { texture },
+                    { width: this.currentSize, height: this.currentSize }
+                );
+                
+                const commands = commandEncoder.finish();
+                this.device.queue.submit([commands]);
+                await this.device.queue.onSubmittedWorkDone();
+                
+                buffer.destroy();
+                return texture;
+            }
+
+            async render(useExpensiveShader = false, useStorageBuffer = false) {
+                const commandEncoder = this.device.createCommandEncoder();
+                const textureView = this.context.getCurrentTexture().createView();
+                
+                let pipeline;
+                if (useStorageBuffer) {
+                    pipeline = this.storageBufferPipeline;
+                } else {
+                    pipeline = useExpensiveShader ? this.expensivePipeline : this.basicPipeline;
+                }
+                
+                // Create bind group
+                let bindGroup;
+                if (useStorageBuffer) {
+                    // Create uniform buffer for storage buffer shader
+                    const uniformData = new Float32Array([
+                        this.sampleSize,  // sampleSize
+                        0,                // padding
+                        this.currentSize, // textureSize.x
+                        this.currentSize  // textureSize.y
+                    ]);
+                    
+                    const uniformBuffer = this.device.createBuffer({
+                        size: uniformData.byteLength,
+                        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+                    });
+                    this.device.queue.writeBuffer(uniformBuffer, 0, uniformData);
+                    
+                    bindGroup = this.device.createBindGroup({
+                        layout: pipeline.getBindGroupLayout(0),
+                        entries: [
+                            { binding: 0, resource: { buffer: this.storageBuffer } },
+                            { binding: 1, resource: { buffer: uniformBuffer } }
+                        ]
+                    });
+                } else if (useExpensiveShader) {
+                    // Create uniform buffer for expensive shader
+                    const uniformData = new Float32Array([
+                        this.sampleSize,  // sampleSize
+                        0,                // padding
+                        this.currentSize, // textureSize.x
+                        this.currentSize  // textureSize.y
+                    ]);
+                    
+                    const uniformBuffer = this.device.createBuffer({
+                        size: uniformData.byteLength,
+                        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+                    });
+                    this.device.queue.writeBuffer(uniformBuffer, 0, uniformData);
+                    
+                    bindGroup = this.device.createBindGroup({
+                        layout: pipeline.getBindGroupLayout(0),
+                        entries: [
+                            { binding: 0, resource: this.texture.createView() },
+                            { binding: 1, resource: { buffer: uniformBuffer } }
+                        ]
+                    });
+                } else {
+                    bindGroup = this.device.createBindGroup({
+                        layout: pipeline.getBindGroupLayout(0),
+                        entries: [
+                            { binding: 0, resource: this.texture.createView() }
+                        ]
+                    });
+                }
+                
+                const renderPass = commandEncoder.beginRenderPass({
+                    colorAttachments: [{
+                        view: textureView,
+                        clearValue: { r: 0, g: 0, b: 0, a: 1 },
+                        loadOp: 'clear',
+                        storeOp: 'store'
+                    }]
+                });
+                
+                renderPass.setPipeline(pipeline);
+                renderPass.setBindGroup(0, bindGroup);
+                renderPass.setVertexBuffer(0, this.vertexBuffer);
+                renderPass.draw(4);
+                renderPass.end();
+                
+                this.device.queue.submit([commandEncoder.finish()]);
+                
+                // Wait for rendering to complete
+                await this.device.queue.onSubmittedWorkDone();
+            }
+
+            async logComprehensiveSummary() {
+                this.log('\n\n=== COMPREHENSIVE WEBGPU PERFORMANCE SUMMARY ===');
+                this.log('Average Upload Times (ms)');
+                
+                // Test descriptions
+                const testDescriptions = {
+                    'Basic': 'Reuse single texture with writeTexture (cheap shader)',
+                    'GPU-Stressed': 'Reuse single texture with writeTexture (heavy GPU load)',
+                    'Realloc': 'Create new texture each frame with writeTexture (heavy GPU load)',
+                    'Double-Buffer': 'Cycle between 2 pre-allocated textures (heavy GPU load)',
+                    'Triple-Buffer': 'Cycle between 3 pre-allocated textures (heavy GPU load)',
+                    'Quad-Buffer': 'Cycle between 4 pre-allocated textures (heavy GPU load)',
+                    'Penta-Buffer': 'Cycle between 5 pre-allocated textures (heavy GPU load)',
+                    'Buffer-Copy': 'Buffer-to-texture copy instead of writeTexture (heavy GPU load)',
+                    'Queue-Submit': 'Explicit queue submission after writeTexture (heavy GPU load)',
+                    'Mem-Aligned': '64-byte aligned memory with writeTexture (heavy GPU load)',
+                    'Storage-Buffer': 'Storage buffer instead of texture (heavy GPU load)',
+                    'Tiled-1024': 'Upload as 1024x1024 tiles (heavy GPU load)',
+                    'GPU-Realloc': 'Fresh texture creation each frame (heavy GPU load)',
+                    'Fresh-Buffer': 'Fresh buffer + texture each frame (heavy GPU load)',
+                    'Mapped-Buffer': 'Mapped buffer creation for upload (heavy GPU load)'
+                };
+                
+                // Log test descriptions
+                this.log('\nTest Descriptions:');
+                const tests = Object.keys(this.allTestResults);
+                for (const test of tests) {
+                    this.log(`  ${test}: ${testDescriptions[test] || 'Unknown test'}`);
+                }
+                
+                // Create shortened test names for headers
+                const shortNames = {
+                    'Basic': 'Basic',
+                    'GPU-Stressed': 'GPU-Stress',
+                    'Realloc': 'Realloc',
+                    'Double-Buffer': 'Double-Buf',
+                    'Triple-Buffer': 'Triple-Buf',
+                    'Quad-Buffer': 'Quad-Buf',
+                    'Penta-Buffer': 'Penta-Buf',
+                    'Buffer-Copy': 'Buf-Copy',
+                    'Queue-Submit': 'Que-Submit',
+                    'Mem-Aligned': 'Mem-Align',
+                    'Storage-Buffer': 'Storage',
+                    'Tiled-1024': 'Tiled',
+                    'GPU-Realloc': 'GPU-Realloc',
+                    'Fresh-Buffer': 'Fresh-Buf',
+                    'Mapped-Buffer': 'Map-Buf'
+                };
+                
+                // Get raw browser information
+                
+                const getWebGPUInfo = async () => {
+                    try {
+                        const adapter = await navigator.gpu?.requestAdapter();
+                        if (adapter) {
+                            const info = await adapter.requestAdapterInfo?.();
+                            return info || null;
+                        }
+                    } catch (e) {
+                        // Fallback for older browsers
+                    }
+                    return null;
+                };
+                
+                const webgpuInfo = await getWebGPUInfo();
+                
+                this.log('\nSystem Information:');
+                this.log(`User Agent: ${navigator.userAgent}`);
+                this.log(`Platform: ${navigator.platform}`);
+                if (webgpuInfo) {
+                    this.log(`WebGPU Adapter Info: ${JSON.stringify(webgpuInfo, null, 2)}`);
+                } else {
+                    this.log('WebGPU Adapter Info: Not available');
+                }
+                
+                this.log('\nResults:');
+                // Create two-line header
+                let header1 = 'Resolution   |';
+                let header2 = '             |';
+                for (const test of tests) {
+                    const shortName = shortNames[test] || test;
+                    header1 += ` ${shortName.padEnd(10)}|`;
+                    header2 += ` ${'(ms)'.padEnd(10)}|`;
+                }
+                this.log(header1);
+                this.log(header2);
+                
+                // Create separator
+                let separator = '-------------|';
+                for (const test of tests) {
+                    separator += '-----------';
+                }
+                this.log(separator);
+                
+                // Create data rows
+                for (const size of this.testSizes) {
+                    let row = `${size}x${size}`.padEnd(12) + ' |';
+                    for (const test of tests) {
+                        const result = this.allTestResults[test][size];
+                        const value = result ? result.avgUploadTime.toFixed(2) : 'N/A';
+                        row += ` ${value.padEnd(10)}|`;
+                    }
+                    this.log(row);
+                }
+            }
+
+            stopTest() {
+                this.isRunning = false;
+                this.cleanupTextures();
+                this.cleanupStorageBuffer();
+                document.getElementById('runAllBtn').disabled = false;
+                document.getElementById('runQuickBtn').disabled = false;
+                document.getElementById('stopBtn').disabled = true;
+                this.updateStatus('All tests complete');
+                this.log('\n=== ALL TESTS COMPLETE ===');
+            }
+
+            cleanupStorageBuffer() {
+                if (this.storageBuffer) {
+                    this.storageBuffer.destroy();
+                    this.storageBuffer = null;
+                }
+            }
+        }
+
+        // Initialize the tester when page loads
+        let tester;
+        window.addEventListener('DOMContentLoaded', () => {
+            tester = new TextureUploadTester();
+            
+            document.getElementById('runAllBtn').addEventListener('click', () => {
+                tester.startAllTests();
+            });
+            
+            document.getElementById('runQuickBtn').addEventListener('click', () => {
+                tester.startAllTests(50);
+            });
+            
+            document.getElementById('sampleSize').addEventListener('input', (e) => {
+                const size = parseInt(e.target.value);
+                const total = size * size;
+                document.getElementById('sampleInfo').textContent = `(${size}x${size} = ${total} samples per fragment)`;
+            });
+            
+            document.getElementById('stopBtn').addEventListener('click', () => {
+                tester.stopTest();
+            });
+        });
+    </script>
+</body>
+</html>
