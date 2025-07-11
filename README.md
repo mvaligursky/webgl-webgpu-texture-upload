@@ -101,6 +101,9 @@ The WebGPU benchmark (`index-webgpu.html`) focuses on modern GPU API approaches:
 **The complete benchmark results are detailed below, but here are the main performance insights for 4096×4096 texture uploads:**
 
 ### 🍎 macOS (Apple M4 Max): Chrome vs Safari
+
+![macOS Performance Comparison](macos.png)
+
 ```
 Browser    | WebGL Idle | WebGL Busy | WebGPU Idle | WebGPU Busy
 -----------|------------|------------|-------------|------------
@@ -117,6 +120,9 @@ Safari     | ~4ms       | ~4ms       | ~4ms        | ~4ms
 *Safari consistently outperforms Chrome on Apple Silicon, showing significant advantages especially under GPU load scenarios.*
 
 ### 🖥️ Windows 11 (Intel i7 + NVIDIA GeForce RTX 2070): Chrome vs Firefox
+
+![Windows 11 Performance Comparison](win11.png)
+
 ```
 Browser    | WebGL Idle | WebGL Busy | WebGPU Idle | WebGPU Busy
 -----------|------------|------------|-------------|------------
