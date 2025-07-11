@@ -130,73 +130,45 @@ Texture Size | Basic   | GPU-Stress | Storage Buffer | Best Strategy
 
 **WebGL1 (Mutable Textures):**
 ```
-Texture Size | Basic   | GPU-Stress| Realloc | Buf-Orphan| Pack-Aln1| Pack-Aln8 | Mem-Share | Notes
--------------|---------|-----------|---------|-----------|----------|----------|-----------|-------
-256×256      | **0.03ms**| 0.24ms    | 1.66ms  | 38.13ms   | 0.37ms   | 1.32ms   | 0.99ms    | Basic best
-512×512      | **0.06ms**| 1.84ms    | 2.41ms  | 1.78ms    | 1.78ms   | 1.71ms   | 1.32ms    | Basic best
-1024×1024    | 0.41ms  | 1.20ms    | 1.95ms  | 1.22ms    | **1.11ms**| 1.16ms   | 1.23ms    | Pack-Aln1 best
-2048×2048    | 1.64ms  | 7.82ms    | **0.93ms**| 7.79ms   | 7.89ms   | 7.87ms   | 7.80ms    | Realloc best
-4096×4096    | 6.30ms  | 14.73ms   | **4.64ms**| 14.69ms  | 14.71ms  | 14.69ms  | 14.56ms   | Realloc best
+Test Method  | 256×256 | 512×512 | 1024×1024 | 2048×2048 | 4096×4096
+-------------|---------|---------|-----------|-----------|----------
+Basic        | 0.03ms  | 0.06ms  | 0.41ms    | 1.64ms    | 6.30ms
+GPU-Stress   | 0.24ms  | 1.84ms  | 1.20ms    | 7.82ms    | 14.73ms
+Realloc      | 1.66ms  | 2.41ms  | 1.95ms    | 0.93ms    | 4.64ms
+Buf-Orphan   | 38.13ms | 1.78ms  | 1.22ms    | 7.79ms    | 14.69ms
+Pack-Aln1    | 0.37ms  | 1.78ms  | 1.11ms    | 7.89ms    | 14.71ms
+Pack-Aln8    | 1.32ms  | 1.71ms  | 1.16ms    | 7.87ms    | 14.69ms
+Mem-Share    | 0.99ms  | 1.32ms  | 1.23ms    | 7.80ms    | 14.56ms
 ```
 
 **WebGL2 (Immutable Textures):**
 ```
-Texture Size | Basic   | GPU-Stress| Realloc | Buf-Orphan| Pack-Aln1| Pack-Aln8 | Mem-Share | Notes
--------------|---------|-----------|---------|-----------|----------|----------|-----------|-------
-256×256      | 0.87ms  | 0.47ms    | 1.48ms  | 1.32ms    | **0.43ms**| 1.28ms   | 0.86ms    | Pack-Aln1 best
-512×512      | **0.05ms**| 1.57ms    | 2.30ms  | 1.58ms    | 1.56ms   | 2.33ms   | 3.11ms    | Basic best
-1024×1024    | **0.35ms**| 1.07ms    | 1.78ms  | 1.12ms    | 1.12ms   | 1.80ms   | 2.19ms    | Basic best
-2048×2048    | **1.84ms**| 7.83ms    | 7.74ms  | 7.89ms    | 7.81ms   | 8.44ms   | 8.80ms    | Basic best for WebGL2
-4096×4096    | **6.87ms**| 14.59ms   | 14.54ms | 14.62ms   | 14.54ms  | 14.73ms  | 15.17ms   | Basic best for WebGL2
+Test Method  | 256×256 | 512×512 | 1024×1024 | 2048×2048 | 4096×4096
+-------------|---------|---------|-----------|-----------|----------
+Basic        | 0.87ms  | 0.05ms  | 0.35ms    | 1.84ms    | 6.87ms
+GPU-Stress   | 0.47ms  | 1.57ms  | 1.07ms    | 7.83ms    | 14.59ms
+Realloc      | 1.48ms  | 2.30ms  | 1.78ms    | 7.74ms    | 14.54ms
+Buf-Orphan   | 1.32ms  | 1.58ms  | 1.12ms    | 7.89ms    | 14.62ms
+Pack-Aln1    | 0.43ms  | 1.56ms  | 1.12ms    | 7.81ms    | 14.54ms
+Pack-Aln8    | 1.28ms  | 2.33ms  | 1.80ms    | 8.44ms    | 14.73ms
+Mem-Share    | 0.86ms  | 3.11ms  | 2.19ms    | 8.80ms    | 15.17ms
 ```
 
-#### WebGPU Results:
+**WebGPU Results:**
 ```
-Texture Size | Basic   | GPU-Stress| Storage Buf| Realloc | Multi-Buf | Buf-Copy | Tiled   | Notes
--------------|---------|-----------|------------|---------|-----------|----------|---------|-------
-256×256      | 0.02ms  | 0.02ms    | 0.04ms     | **0.01ms**| 0.02ms    | 2.51ms   | 0.29ms  | Realloc best
-512×512      | **0.05ms**| **0.06ms**| **0.06ms** | 0.08ms  | **0.06ms**| 2.99ms   | 0.53ms  | Basic/GPU-Stress/Storage/Multi best
-1024×1024    | 0.13ms  | 0.18ms    | **0.12ms** | 0.19ms  | **0.10ms**| 3.78ms   | 1.56ms  | Multi-Buf best
-2048×2048    | 2.75ms  | **2.72ms**| **2.69ms** | 3.06ms  | **2.74ms**| 4.91ms   | 5.55ms  | Storage/GPU-Stress/Multi best
-4096×4096    | 10.56ms | 10.58ms   | 10.74ms    | **10.46ms**| **10.40ms**| **10.21ms**| 76.87ms | Multi-Buf/Buf-Copy best
+Test Method  | 256×256 | 512×512 | 1024×1024 | 2048×2048 | 4096×4096
+-------------|---------|---------|-----------|-----------|----------
+Basic        | 0.02ms  | 0.05ms  | 0.13ms    | 2.75ms    | 10.56ms
+GPU-Stress   | 0.02ms  | 0.06ms  | 0.18ms    | 2.72ms    | 10.58ms
+Storage Buf  | 0.04ms  | 0.06ms  | 0.12ms    | 2.69ms    | 10.74ms
+Realloc      | 0.01ms  | 0.08ms  | 0.19ms    | 3.06ms    | 10.46ms
+Multi-Buf    | 0.02ms  | 0.06ms  | 0.10ms    | 2.74ms    | 10.40ms
+Buf-Copy     | 2.51ms  | 2.99ms  | 3.78ms    | 4.91ms    | 10.21ms
+Tiled        | 0.29ms  | 0.53ms  | 1.56ms    | 5.55ms    | 76.87ms
 ```
 
 **Platform**: Apple M4 Max, macOS, Chrome 138.0.0.0  
 **Driver**: ANGLE Metal Renderer
-
----
-
-### [Platform Name] - [Hardware] - [OS] - [Browser]
-
-*Template for additional platform testing results*
-
-#### WebGL Results:
-```
-Texture Size | Basic | GPU-Stress | Realloc | Notes
--------------|-------|------------|---------|-------
-256×256      |       |            |         |
-512×512      |       |            |         |
-1024×1024    |       |            |         |
-2048×2048    |       |            |         |
-4096×4096    |       |            |         |
-```
-
-#### WebGPU Results:
-```
-Texture Size | Basic | GPU-Stress | Storage Buffer | Notes
--------------|-------|------------|----------------|-------
-256×256      |       |            |                |
-512×512      |       |            |                |
-1024×1024    |       |            |                |
-2048×2048    |       |            |                |
-4096×4096    |       |            |                |
-```
-
-#### Platform-Specific Observations:
-- Driver version:
-- Key performance characteristics:
-- Optimal strategies:
-- Notable differences from Apple M4:
 
 ---
 
