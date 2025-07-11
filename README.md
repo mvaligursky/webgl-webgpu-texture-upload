@@ -93,37 +93,6 @@ The WebGPU benchmark (`index-webgpu.html`) focuses on modern GPU API approaches:
 
 ## 📊 Performance Results by Platform
 
-### Apple M4 (MacBook Pro, macOS Sonoma, Chrome)
-
-#### WebGL Results (R32U format):
-```
-Texture Size | Basic   | GPU-Stress | Realloc | Best Strategy
--------------|---------|------------|---------|----------------
-256×256      | 0.02ms  | 0.32ms     | 1.79ms  | Basic
-512×512      | 0.06ms  | 1.81ms     | 2.36ms  | Basic  
-1024×1024    | 0.42ms  | 1.22ms     | 2.00ms  | Basic
-2048×2048    | 1.63ms  | 7.80ms     | 0.96ms  | Realloc ⭐
-4096×4096    | 6.64ms  | 14.58ms    | 3.85ms  | Realloc ⭐
-```
-
-#### WebGPU Results (R32U format):
-```
-Texture Size | Basic   | GPU-Stress | Storage Buffer | Best Strategy
--------------|---------|------------|----------------|----------------
-256×256      | 0.02ms  | 0.03ms     | 0.03ms        | All equivalent
-512×512      | 0.06ms  | 0.07ms     | 0.07ms        | All equivalent
-1024×1024    | 0.17ms  | 0.20ms     | 0.11ms        | Storage Buffer ⭐
-2048×2048    | 2.75ms  | 2.83ms     | 2.77ms        | All equivalent
-4096×4096    | 10.81ms | 10.54ms    | 11.21ms       | GPU-Stress
-```
-
-#### Cross-API Comparison:
-- **≤1024×1024**: WebGPU dominates (10-53x faster)
-- **≥2048×2048**: WebGL Realloc wins (2.5-3x faster)  
-- **Optimal Strategy**: WebGPU Storage Buffer (≤1024) → WebGL Realloc (≥2048)
-
----
-
 ### Apple M4 Max (MacBook Pro, macOS, Chrome 138.0.0.0)
 
 #### WebGL Results:
@@ -169,41 +138,6 @@ Tiled        | 0.29ms  | 0.53ms  | 1.56ms    | 5.55ms    | 76.87ms
 
 **Platform**: Apple M4 Max, macOS, Chrome 138.0.0.0  
 **Driver**: ANGLE Metal Renderer
-
----
-
-## 🔬 Analysis & Insights
-
-### Key Findings
-1. **Hardware-Dependent Optimization**: Different GPUs favor different strategies
-2. **Size-Based Strategy Selection**: Optimal approach varies significantly with texture size
-3. **API-Specific Advantages**: WebGL's realloc hack vs WebGPU's storage buffer approach
-4. **Driver Maturity**: WebGL more mature, WebGPU rapidly improving
-
-### Optimization Recommendations
-- **Cross-platform apps**: Implement adaptive strategy selection based on texture size and API
-- **WebGL optimization**: Use allocation-stressed approach for large textures (≥2048×2048)
-- **WebGPU optimization**: Leverage storage buffers for small-medium textures (≤1024×1024)
-- **Performance testing**: Always benchmark on target hardware before deployment
-
-## 🤝 Contributing
-
-To contribute platform-specific results:
-
-1. Run both WebGL and WebGPU tests on your platform
-2. Record the console output summary tables
-3. Note your hardware, OS, and browser details
-4. Add results using the template above
-5. Submit via pull request or issue
-
-**Platform Details Template:**
-```
-Platform: [CPU] + [GPU]
-OS: [OS Version]
-Browser: [Browser + Version]
-Driver: [Graphics Driver Version]
-Date: [Test Date]
-```
 
 ## 📝 License
 
