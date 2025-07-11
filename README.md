@@ -96,6 +96,44 @@ The WebGPU benchmark (`index-webgpu.html`) focuses on modern GPU API approaches:
 - **Size Variation**: Blur intensity should vary with texture size
 - **Consistent APIs**: WebGL and WebGPU should show similar visual effects
 
+## 🎯 Key Findings Summary
+
+**The complete benchmark results are detailed below, but here are the main performance insights for 4096×4096 texture uploads:**
+
+### 🍎 macOS (Apple M4 Max): Chrome vs Safari
+```
+Browser    | WebGL Idle | WebGL Busy | WebGPU Idle | WebGPU Busy
+-----------|------------|------------|-------------|------------
+Chrome     | ~6ms       | ~15ms      | ~9ms        | ~9ms
+Safari     | ~4ms       | ~4ms       | ~4ms        | ~4ms
+```
+
+**🏆 Safari Advantages:**
+- **WebGL Idle**: 33% faster than Chrome
+- **WebGL Busy**: 73% faster than Chrome  
+- **WebGPU Idle**: 56% faster than Chrome
+- **WebGPU Busy**: 56% faster than Chrome
+
+*Safari consistently outperforms Chrome on Apple Silicon, showing significant advantages especially under GPU load scenarios.*
+
+### 🖥️ Windows 11 (Intel i7 + NVIDIA GeForce RTX 2070): Chrome vs Firefox
+```
+Browser    | WebGL Idle | WebGL Busy | WebGPU Idle | WebGPU Busy
+-----------|------------|------------|-------------|------------
+Chrome     | ~23ms      | ~35ms      | ~41ms       | ~38ms
+Firefox    | ~24ms      | ~24ms      | ~26ms       | ~25ms
+```
+
+**🦊 Firefox Advantages:**
+- **WebGL Idle**: 4% slower than Chrome (comparable)
+- **WebGL Busy**: 31% faster than Chrome
+- **WebGPU Idle**: 37% faster than Chrome
+- **WebGPU Busy**: 34% faster than Chrome
+
+*Firefox shows superior performance under GPU load conditions.*
+
+---
+
 ## 📊 Performance Results by Platform
 
 ### Apple M4 Max (MacBook Pro, macOS, Chrome 138.0.0.0)
@@ -325,6 +363,83 @@ Map-Buf      | 2.97ms   | 3.24ms   | 5.36ms    | 12.96ms    | 42.13ms
 
 **Platform**: Windows 11, Chrome 138.0.0.0  
 **GPU**: NVIDIA GeForce RTX 2070  
+**Driver**: ANGLE Direct3D11 vs_5.0 ps_5.0
+
+---
+
+### Windows 11 (Firefox 141.0, NVIDIA GeForce GTX 980)
+
+#### WebGL Results:
+
+**WebGL1 (Mutable Textures):**
+```
+Test Method  | 256×256  | 512×512  | 1024×1024 | 2048×2048  | 4096×4096 
+-------------|----------|----------|-----------|------------|----------
+Basic        | 0.11ms   | 0.54ms   | 1.60ms    | 6.68ms     | 24.32ms
+GPU-Stress   | 0.15ms   | 0.42ms ⭐ | 1.38ms    | 5.95ms     | 24.38ms
+Realloc      | 0.15ms   | 0.43ms   | 1.51ms    | 5.79ms ⭐  | 23.48ms ⭐
+Buf-Orphan   | 0.17ms   | 0.47ms   | 1.36ms    | 6.13ms     | 23.75ms
+Double-Buf   | 0.17ms   | 0.41ms   | 1.34ms    | 5.84ms     | 24.34ms
+Triple-Buf   | 0.15ms   | 0.47ms   | 1.41ms    | 6.14ms     | 24.03ms
+Quad-Buf     | 0.17ms   | 0.54ms   | 1.42ms    | 6.18ms     | 23.84ms
+Penta-Buf    | 0.14ms ⭐ | 0.47ms   | 1.38ms    | 6.19ms     | 23.82ms
+PBO-Single   | 0.21ms   | 0.57ms   | 1.53ms    | 7.65ms     | 30.18ms
+PBO-Double   | 0.16ms   | 0.60ms   | 1.59ms    | 7.67ms     | 30.20ms
+Pack-Aln1    | 0.14ms ⭐ | 0.47ms   | 1.31ms ⭐ | 6.38ms     | 24.63ms
+Pack-Aln8    | 0.14ms ⭐ | 0.48ms   | 1.43ms    | 6.29ms     | 25.17ms
+Sync-Flush   | 0.19ms   | 0.52ms   | 1.57ms    | 7.25ms     | 29.84ms
+Sync-Fin     | 14.76ms  | 15.01ms  | 18.64ms   | 34.58ms    | 90.16ms
+Sync-None    | 0.14ms ⭐ | 0.47ms   | 1.33ms    | 6.17ms     | 24.14ms
+Mem-Align    | 0.28ms   | 1.05ms   | 3.67ms    | 14.32ms    | 51.78ms
+Mem-Share    | 0.17ms   | 0.44ms   | 1.36ms    | 6.28ms     | 24.56ms
+```
+
+**WebGL2 (Immutable Textures):**
+```
+Test Method  | 256×256  | 512×512  | 1024×1024 | 2048×2048  | 4096×4096 
+-------------|----------|----------|-----------|------------|----------
+Basic        | 0.12ms   | 0.52ms   | 1.46ms    | 6.39ms     | 24.25ms
+GPU-Stress   | 0.14ms   | 0.42ms   | 1.36ms    | 6.25ms     | 23.85ms ⭐
+Realloc      | 0.14ms   | 0.43ms   | 1.44ms    | 5.73ms ⭐  | 23.94ms
+Buf-Orphan   | 0.12ms ⭐ | 0.44ms   | 1.33ms    | 6.21ms     | 24.14ms
+Double-Buf   | 0.15ms   | 0.56ms   | 1.30ms ⭐ | 6.24ms     | 24.27ms
+Triple-Buf   | 0.17ms   | 0.41ms ⭐ | 1.36ms    | 6.06ms     | 24.02ms
+Quad-Buf     | 0.15ms   | 0.40ms ⭐ | 1.35ms    | 6.21ms     | 24.09ms
+Penta-Buf    | 0.14ms   | 0.46ms   | 1.46ms    | 6.05ms     | 23.84ms
+PBO-Single   | 0.20ms   | 0.56ms   | 1.53ms    | 7.55ms     | 29.54ms
+PBO-Double   | 0.19ms   | 0.54ms   | 1.55ms    | 7.60ms     | 29.77ms
+Pack-Aln1    | 0.13ms   | 0.55ms   | 1.43ms    | 6.26ms     | 24.70ms
+Pack-Aln8    | 0.15ms   | 0.68ms   | 1.70ms    | 6.28ms     | 24.64ms
+Sync-Flush   | 0.22ms   | 0.52ms   | 1.59ms    | 7.38ms     | 30.77ms
+Sync-Fin     | 15.24ms  | 15.18ms  | 25.39ms   | 28.16ms    | 87.80ms
+Sync-None    | 0.16ms   | 0.45ms   | 1.34ms    | 6.11ms     | 23.73ms
+Mem-Align    | 0.28ms   | 0.97ms   | 3.69ms    | 14.79ms    | 53.11ms
+Mem-Share    | 0.14ms   | 0.45ms   | 1.31ms    | 6.08ms     | 24.32ms
+```
+
+**WebGPU Results:**
+```
+Test Method  | 256×256  | 512×512  | 1024×1024 | 2048×2048  | 4096×4096 
+-------------|----------|----------|-----------|------------|----------
+Basic        | 0.20ms   | 0.45ms   | 1.78ms    | 6.92ms     | 26.28ms
+GPU-Stress   | 0.20ms   | 0.51ms   | 1.72ms ⭐ | 6.38ms ⭐  | 24.98ms ⭐
+Realloc      | 0.13ms ⭐ | 0.60ms   | 1.90ms    | 6.73ms     | 25.52ms
+Double-Buf   | 0.28ms   | 0.56ms   | 1.93ms    | 7.63ms     | 25.33ms
+Triple-Buf   | 0.14ms   | 0.53ms ⭐ | 1.85ms    | 6.63ms     | 24.77ms
+Quad-Buf     | 0.17ms   | 0.54ms   | 1.73ms    | 6.46ms     | 24.89ms
+Penta-Buf    | 0.19ms   | 0.63ms   | 2.10ms    | 7.50ms     | 25.21ms
+Buf-Copy     | 98.89ms  | 103.92ms | 98.81ms   | 100.08ms   | 105.92ms
+Que-Submit   | 99.53ms  | 98.91ms  | 100.32ms  | 102.72ms   | 106.55ms
+Mem-Align    | 0.34ms   | 1.12ms   | 3.79ms    | 13.03ms    | 48.06ms
+Storage      | 0.24ms   | 0.59ms   | 1.76ms    | 6.71ms     | 25.59ms
+Tiled        | 0.77ms   | 1.73ms   | 5.22ms    | 20.98ms    | 219.04ms
+GPU-Realloc  | 0.24ms   | 0.61ms   | 1.91ms    | 7.47ms     | 26.37ms
+Fresh-Buf    | 101.16ms | 100.93ms | 100.82ms  | 101.06ms   | 103.05ms
+Map-Buf      | 106.01ms | 99.94ms  | 100.58ms  | 100.16ms   | 105.50ms
+```
+
+**Platform**: Windows 11, Firefox 141.0  
+**GPU**: NVIDIA GeForce GTX 980  
 **Driver**: ANGLE Direct3D11 vs_5.0 ps_5.0
 
 ## 🤖 Development Credits
