@@ -60,6 +60,41 @@
         <button id="runAllBtn">Run All Tests (200 loops)</button>
         <button id="runQuickBtn">Run Quick Tests (50 loops)</button>
         <button id="stopBtn" disabled>Stop Tests</button>
+        <div style="margin: 15px 0; padding: 15px; background-color: #333; border-radius: 5px;">
+            <h3 style="margin: 0 0 10px 0; color: #4CAF50;">Individual Test Runner</h3>
+            <div style="margin: 10px 0;">
+                <label for="testSelect">Select Test: </label>
+                <select id="testSelect" style="padding: 5px; font-size: 14px; background-color: #555; color: #fff; border: 1px solid #666; border-radius: 3px; margin: 0 10px;">
+                    <option value="basic">Basic</option>
+                    <option value="gpu-stressed">GPU-Stressed</option>
+                    <option value="allocation-stressed">Realloc</option>
+                    <option value="multi-buffer-2">Double-Buffer</option>
+                    <option value="multi-buffer-3">Triple-Buffer</option>
+                    <option value="multi-buffer-4">Quad-Buffer</option>
+                    <option value="multi-buffer-5">Penta-Buffer</option>
+                    <option value="buffer-copy">Buffer-Copy</option>
+                    <option value="queue-submit">Queue-Submit</option>
+                    <option value="mem-aligned">Mem-Aligned</option>
+                    <option value="storage-buffer">Storage-Buffer</option>
+                    <option value="tiled-upload">Tiled-1024</option>
+                    <option value="gpu-realloc">GPU-Realloc</option>
+                    <option value="fresh-buffer">Fresh-Buffer</option>
+                    <option value="mapped-buffer">Mapped-Buffer</option>
+                </select>
+            </div>
+            <div style="margin: 10px 0;">
+                <label for="textureSize">Texture Size: </label>
+                <select id="textureSize" style="padding: 5px; font-size: 14px; background-color: #555; color: #fff; border: 1px solid #666; border-radius: 3px; margin: 0 10px;">
+                    <option value="256">256×256</option>
+                    <option value="512">512×512</option>
+                    <option value="1024">1024×1024</option>
+                    <option value="2048">2048×2048</option>
+                    <option value="4096">4096×4096</option>
+                    <option value="all">All Sizes</option>
+                </select>
+            </div>
+            <button id="runSingleBtn">Run Selected Test</button>
+        </div>
         <div style="margin: 10px 0;">
             <label for="sampleSize">GPU Load (NxN sampling): </label>
             <input type="number" id="sampleSize" value="40" min="1" max="50" style="width: 60px;">
@@ -1013,12 +1048,101 @@
                 }
             }
 
+            async runSelectedTest() {
+                if (this.isRunning) return;
+                
+                this.isRunning = true;
+                this.sampleSize = parseInt(document.getElementById('sampleSize').value);
+                
+                // Get selections
+                const selectedTestType = document.getElementById('testSelect').value;
+                const selectedSize = document.getElementById('textureSize').value;
+                
+                // Disable buttons
+                document.getElementById('runAllBtn').disabled = true;
+                document.getElementById('runQuickBtn').disabled = true;
+                document.getElementById('runSingleBtn').disabled = true;
+                document.getElementById('stopBtn').disabled = false;
+                
+                // Map test type to test config
+                const testConfig = this.getTestConfig(selectedTestType);
+                
+                this.log(`\n=== RUNNING INDIVIDUAL WEBGPU TEST: ${testConfig.name.toUpperCase()} ===`);
+                this.log(`Size: ${selectedSize === 'all' ? 'All Sizes' : selectedSize + 'x' + selectedSize}`);
+                this.log(`GPU load: ${this.sampleSize}x${this.sampleSize} samples per fragment`);
+                
+                // Initialize results storage
+                this.allTestResults = {};
+                this.maxIterations = 200; // Use full iterations for individual tests
+                
+                // Determine sizes to test
+                const sizesToTest = selectedSize === 'all' ? this.testSizes : [parseInt(selectedSize)];
+                
+                this.allTestResults[testConfig.name] = {};
+                
+                for (const size of sizesToTest) {
+                    if (!this.isRunning) break;
+                    
+                    this.currentSize = size;
+                    this.currentSizeIndex = this.testSizes.indexOf(size);
+                    
+                    const result = await this.runSingleTest(testConfig);
+                    this.allTestResults[testConfig.name][size] = result;
+                }
+                
+                if (this.isRunning) {
+                    this.logSelectedTestSummary(testConfig, sizesToTest);
+                }
+                
+                this.stopTest();
+            }
+            
+            getTestConfig(testType) {
+                const testConfigs = {
+                    'basic': { name: 'Basic', type: 'basic' },
+                    'gpu-stressed': { name: 'GPU-Stressed', type: 'gpu-stressed' },
+                    'allocation-stressed': { name: 'Realloc', type: 'allocation-stressed' },
+                    'multi-buffer-2': { name: 'Double-Buffer', type: 'multi-buffer', bufferCount: 2 },
+                    'multi-buffer-3': { name: 'Triple-Buffer', type: 'multi-buffer', bufferCount: 3 },
+                    'multi-buffer-4': { name: 'Quad-Buffer', type: 'multi-buffer', bufferCount: 4 },
+                    'multi-buffer-5': { name: 'Penta-Buffer', type: 'multi-buffer', bufferCount: 5 },
+                    'buffer-copy': { name: 'Buffer-Copy', type: 'buffer-copy' },
+                    'queue-submit': { name: 'Queue-Submit', type: 'queue-submit' },
+                    'mem-aligned': { name: 'Mem-Aligned', type: 'mem-aligned' },
+                    'storage-buffer': { name: 'Storage-Buffer', type: 'storage-buffer' },
+                    'tiled-upload': { name: 'Tiled-1024', type: 'tiled-upload' },
+                    'gpu-realloc': { name: 'GPU-Realloc', type: 'gpu-realloc' },
+                    'fresh-buffer': { name: 'Fresh-Buffer', type: 'fresh-buffer' },
+                    'mapped-buffer': { name: 'Mapped-Buffer', type: 'mapped-buffer' }
+                };
+                return testConfigs[testType];
+            }
+            
+            logSelectedTestSummary(testConfig, sizes) {
+                this.log('\n=== SELECTED WEBGPU TEST RESULTS ===');
+                this.log('Resolution   | Upload Time | Render Time | Throughput  | Skipped Frames');
+                this.log('-------------|-------------|-------------|-------------|---------------');
+                
+                for (const size of sizes) {
+                    const result = this.allTestResults[testConfig.name][size];
+                    if (result && result.avgUploadTime !== undefined && result.avgRenderTime !== undefined) {
+                        const sizeStr = `${size}x${size}`.padEnd(12);
+                        const upload = `${result.avgUploadTime.toFixed(2)}ms`.padEnd(11);
+                        const render = `${result.avgRenderTime.toFixed(2)}ms`.padEnd(11);
+                        const throughput = `${(result.throughputMBps || 0).toFixed(1)}MB/s`.padEnd(11);
+                        const skipped = `${result.skippedFrames || 0}`.padEnd(14);
+                        this.log(`${sizeStr} | ${upload} | ${render} | ${throughput} | ${skipped}`);
+                    }
+                }
+            }
+            
             stopTest() {
                 this.isRunning = false;
                 this.cleanupTextures();
                 this.cleanupStorageBuffer();
                 document.getElementById('runAllBtn').disabled = false;
                 document.getElementById('runQuickBtn').disabled = false;
+                document.getElementById('runSingleBtn').disabled = false;
                 document.getElementById('stopBtn').disabled = true;
                 this.updateStatus('All tests complete');
                 this.log('\n=== ALL TESTS COMPLETE ===');
@@ -1053,6 +1177,10 @@
             
             document.getElementById('stopBtn').addEventListener('click', () => {
                 tester.stopTest();
+            });
+            
+            document.getElementById('runSingleBtn').addEventListener('click', () => {
+                tester.runSelectedTest();
             });
         });
     </script>

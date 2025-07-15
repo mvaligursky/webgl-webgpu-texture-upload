@@ -60,6 +60,51 @@
         <button id="runAllBtn">Run All Tests (200 loops)</button>
         <button id="runQuickBtn">Run Quick Tests (50 loops)</button>
         <button id="stopBtn" disabled>Stop Tests</button>
+        <div style="margin: 15px 0; padding: 15px; background-color: #333; border-radius: 5px;">
+            <h3 style="margin: 0 0 10px 0; color: #4CAF50;">Individual Test Runner</h3>
+            <div style="margin: 10px 0;">
+                <label for="testSelect">Select Test: </label>
+                <select id="testSelect" style="padding: 5px; font-size: 14px; background-color: #555; color: #fff; border: 1px solid #666; border-radius: 3px; margin: 0 10px;">
+                    <option value="basic">Basic</option>
+                    <option value="gpu-stressed">GPU-Stressed</option>
+                    <option value="allocation-stressed">Realloc</option>
+                    <option value="buffer-orphan">Buf-Orphan</option>
+                    <option value="multi-buffer-2">Double-Buffer</option>
+                    <option value="multi-buffer-3">Triple-Buffer</option>
+                    <option value="multi-buffer-4">Quad-Buffer</option>
+                    <option value="multi-buffer-5">Penta-Buffer</option>
+                    <option value="pbo-single">PBO-Single</option>
+                    <option value="pbo-double">PBO-Double</option>
+                    <option value="pack-align1">Pack-Aln1</option>
+                    <option value="pack-align8">Pack-Aln8</option>
+                    <option value="sync-flush">Sync-Flush</option>
+                    <option value="sync-finish">Sync-Fin</option>
+                    <option value="sync-none">Sync-None</option>
+                    <option value="mem-aligned">Mem-Align</option>
+                    <option value="mem-shared">Mem-Share</option>
+                </select>
+            </div>
+            <div style="margin: 10px 0;">
+                <label for="webglMode">WebGL Mode: </label>
+                <select id="webglMode" style="padding: 5px; font-size: 14px; background-color: #555; color: #fff; border: 1px solid #666; border-radius: 3px; margin: 0 10px;">
+                    <option value="webgl1">WebGL1 (Mutable)</option>
+                    <option value="webgl2">WebGL2 (Immutable)</option>
+                    <option value="both">Both Modes</option>
+                </select>
+            </div>
+            <div style="margin: 10px 0;">
+                <label for="textureSize">Texture Size: </label>
+                <select id="textureSize" style="padding: 5px; font-size: 14px; background-color: #555; color: #fff; border: 1px solid #666; border-radius: 3px; margin: 0 10px;">
+                    <option value="256">256×256</option>
+                    <option value="512">512×512</option>
+                    <option value="1024">1024×1024</option>
+                    <option value="2048">2048×2048</option>
+                    <option value="4096">4096×4096</option>
+                    <option value="all">All Sizes</option>
+                </select>
+            </div>
+            <button id="runSingleBtn">Run Selected Test</button>
+        </div>
         <div style="margin: 10px 0;">
             <label for="sampleSize">GPU Load (NxN sampling): </label>
             <input type="number" id="sampleSize" value="40" min="1" max="50" style="width: 60px;">
@@ -945,12 +990,148 @@
                 }
             }
 
+            async runSelectedTest() {
+                if (this.isRunning) return;
+                
+                this.isRunning = true;
+                this.sampleSize = parseInt(document.getElementById('sampleSize').value);
+                
+                // Get selections
+                const selectedTestType = document.getElementById('testSelect').value;
+                const selectedMode = document.getElementById('webglMode').value;
+                const selectedSize = document.getElementById('textureSize').value;
+                
+                // Disable buttons
+                document.getElementById('runAllBtn').disabled = true;
+                document.getElementById('runQuickBtn').disabled = true;
+                document.getElementById('runSingleBtn').disabled = true;
+                document.getElementById('stopBtn').disabled = false;
+                
+                // Map test type to test config
+                const testConfig = this.getTestConfig(selectedTestType);
+                
+                this.log(`\n=== RUNNING INDIVIDUAL TEST: ${testConfig.name.toUpperCase()} ===`);
+                this.log(`Mode: ${selectedMode}, Size: ${selectedSize === 'all' ? 'All Sizes' : selectedSize + 'x' + selectedSize}`);
+                this.log(`GPU load: ${this.sampleSize}x${this.sampleSize} samples per fragment`);
+                
+                // Initialize results storage
+                this.allTestResultsWebGL1 = {};
+                this.allTestResultsWebGL2 = {};
+                this.maxIterations = 200; // Use full iterations for individual tests
+                
+                // Determine sizes to test
+                const sizesToTest = selectedSize === 'all' ? this.testSizes : [parseInt(selectedSize)];
+                
+                // Run for selected mode(s)
+                if (selectedMode === 'webgl1' || selectedMode === 'both') {
+                    this.log('\n🔸 RUNNING WEBGL1 (MUTABLE TEXTURES) TEST 🔸');
+                    this.currentWebGLMode = 'webgl1';
+                    this.allTestResultsWebGL1[testConfig.name] = {};
+                    
+                    for (const size of sizesToTest) {
+                        if (!this.isRunning) break;
+                        
+                        this.currentSize = size;
+                        this.currentSizeIndex = this.testSizes.indexOf(size);
+                        
+                        const result = await this.runSingleTest(testConfig);
+                        this.allTestResultsWebGL1[testConfig.name][size] = result;
+                    }
+                }
+                
+                if (selectedMode === 'webgl2' || selectedMode === 'both') {
+                    this.log('\n🔹 RUNNING WEBGL2 (IMMUTABLE TEXTURES) TEST 🔹');
+                    this.currentWebGLMode = 'webgl2';
+                    this.allTestResultsWebGL2[testConfig.name] = {};
+                    
+                    for (const size of sizesToTest) {
+                        if (!this.isRunning) break;
+                        
+                        this.currentSize = size;
+                        this.currentSizeIndex = this.testSizes.indexOf(size);
+                        
+                        const result = await this.runSingleTest(testConfig);
+                        this.allTestResultsWebGL2[testConfig.name][size] = result;
+                    }
+                }
+                
+                if (this.isRunning) {
+                    this.logSelectedTestSummary(testConfig, selectedMode, sizesToTest);
+                }
+                
+                this.stopTest();
+            }
+            
+            getTestConfig(testType) {
+                const testConfigs = {
+                    'basic': { name: 'Basic', type: 'basic' },
+                    'gpu-stressed': { name: 'GPU-Stressed', type: 'gpu-stressed' },
+                    'allocation-stressed': { name: 'Realloc', type: 'allocation-stressed' },
+                    'buffer-orphan': { name: 'Buf-Orphan', type: 'buffer-orphan' },
+                    'multi-buffer-2': { name: 'Double-Buffer', type: 'multi-buffer', bufferCount: 2 },
+                    'multi-buffer-3': { name: 'Triple-Buffer', type: 'multi-buffer', bufferCount: 3 },
+                    'multi-buffer-4': { name: 'Quad-Buffer', type: 'multi-buffer', bufferCount: 4 },
+                    'multi-buffer-5': { name: 'Penta-Buffer', type: 'multi-buffer', bufferCount: 5 },
+                    'pbo-single': { name: 'PBO-Single', type: 'pbo-single' },
+                    'pbo-double': { name: 'PBO-Double', type: 'pbo-double' },
+                    'pack-align1': { name: 'Pack-Aln1', type: 'pack-align1' },
+                    'pack-align8': { name: 'Pack-Aln8', type: 'pack-align8' },
+                    'sync-flush': { name: 'Sync-Flush', type: 'sync-flush' },
+                    'sync-finish': { name: 'Sync-Fin', type: 'sync-finish' },
+                    'sync-none': { name: 'Sync-None', type: 'sync-none' },
+                    'mem-aligned': { name: 'Mem-Align', type: 'mem-aligned' },
+                    'mem-shared': { name: 'Mem-Share', type: 'mem-shared' }
+                };
+                return testConfigs[testType];
+            }
+            
+            logSelectedTestSummary(testConfig, mode, sizes) {
+                this.log('\n=== SELECTED TEST RESULTS ===');
+                
+                if (mode === 'webgl1' || mode === 'both') {
+                    this.log('\n🔸 WEBGL1 (MUTABLE TEXTURES) RESULTS:');
+                    this.log('Resolution   | Upload Time | Render Time | Throughput  | Skipped Frames');
+                    this.log('-------------|-------------|-------------|-------------|---------------');
+                    
+                    for (const size of sizes) {
+                        const result = this.allTestResultsWebGL1[testConfig.name][size];
+                        if (result && result.avgUploadTime !== undefined && result.avgRenderTime !== undefined) {
+                            const sizeStr = `${size}x${size}`.padEnd(12);
+                            const upload = `${result.avgUploadTime.toFixed(2)}ms`.padEnd(11);
+                            const render = `${result.avgRenderTime.toFixed(2)}ms`.padEnd(11);
+                            const throughput = `${(result.throughputMBps || 0).toFixed(1)}MB/s`.padEnd(11);
+                            const skipped = `${result.skippedFrames || 0}`.padEnd(14);
+                            this.log(`${sizeStr} | ${upload} | ${render} | ${throughput} | ${skipped}`);
+                        }
+                    }
+                }
+                
+                if (mode === 'webgl2' || mode === 'both') {
+                    this.log('\n🔹 WEBGL2 (IMMUTABLE TEXTURES) RESULTS:');
+                    this.log('Resolution   | Upload Time | Render Time | Throughput  | Skipped Frames');
+                    this.log('-------------|-------------|-------------|-------------|---------------');
+                    
+                    for (const size of sizes) {
+                        const result = this.allTestResultsWebGL2[testConfig.name][size];
+                        if (result && result.avgUploadTime !== undefined && result.avgRenderTime !== undefined) {
+                            const sizeStr = `${size}x${size}`.padEnd(12);
+                            const upload = `${result.avgUploadTime.toFixed(2)}ms`.padEnd(11);
+                            const render = `${result.avgRenderTime.toFixed(2)}ms`.padEnd(11);
+                            const throughput = `${(result.throughputMBps || 0).toFixed(1)}MB/s`.padEnd(11);
+                            const skipped = `${result.skippedFrames || 0}`.padEnd(14);
+                            this.log(`${sizeStr} | ${upload} | ${render} | ${throughput} | ${skipped}`);
+                        }
+                    }
+                }
+            }
+            
             stopTest() {
                 this.isRunning = false;
                 this.cleanupTextures();
                 this.cleanupPBOs();
                 document.getElementById('runAllBtn').disabled = false;
                 document.getElementById('runQuickBtn').disabled = false;
+                document.getElementById('runSingleBtn').disabled = false;
                 document.getElementById('stopBtn').disabled = true;
                 this.updateStatus('All tests complete');
                 this.log('\n=== ALL TESTS COMPLETE ===');
@@ -978,6 +1159,10 @@
             
             document.getElementById('stopBtn').addEventListener('click', () => {
                 tester.stopTest();
+            });
+            
+            document.getElementById('runSingleBtn').addEventListener('click', () => {
+                tester.runSelectedTest();
             });
         });
     </script>
